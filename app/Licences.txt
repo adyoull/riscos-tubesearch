@@ -1,0 +1,15 @@
+TubeSearch: the licences of what is in it
+=========================================
+
+!RunImage and tscli          TubeSearch, MIT licence (below).
+tscli                        also contains QuickJS 2026-06-04 by Fabrice
+                             Bellard and Charlie Gordon, MIT licence (below),
+                             built without its std and os modules.
+Resources.ejs.lib and core   yt-dlp's challenge solver scripts (yt-dlp/ejs
+                             0.8.0, github.com/yt-dlp/ejs), Unlicense
+                             (below). lib also contains meriyah (ISC, (c)
+                             2019 and later, KFlash and others) and astring
+                             (MIT, (c) 2015 David Bonnet): their licence
+                             texts are in lib itself, at the start of each.
+                             Newer versions that TubeSearch downloads are
+                             kept in Choices:TubeSearch.ejs.

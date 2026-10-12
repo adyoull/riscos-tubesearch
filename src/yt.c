@@ -31,6 +31,22 @@ static setting settings[] = {
   { "consent_cookie", "SOCS=CAE=", NULL },
   { "channel_videos_params", "EgZ2aWRlb3PyBgQKAjoA", NULL },
   { "max_quality", "1080", NULL },
+  /* the fallback when the player client gives nothing playable: yt-dlp
+     2026-10-10's default client, tv_samsung (needs the player's JavaScript) */
+  { "stream_client", "auto", NULL },          /* auto (player, then tv), player, tv */
+  { "tv_host", "www.youtube.com", NULL },
+  { "tv_client_version", "5.20260707", NULL },
+  { "tv_user_agent", "Mozilla/5.0 (SMART-TV; Linux; Tizen 2.4.0) AppleWebKit/538.1 (KHTML, like Gecko) Version/2.4.0 TV Safari/538.1", NULL },
+  { "tv_device_make", "Samsung", NULL },
+  { "tv_device_model", "UKS9800", NULL },
+  { "tv_os_name", "Tizen", NULL },
+  { "tv_os_version", "2.4.0", NULL },
+  { "player_js_variant", "player_ias.vflset/en_US/base.js", NULL },
+  { "thumb_user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36", NULL },
+  /* the solver scripts: which version to use comes from this manifest */
+  { "ejs_manifest_url", "https://raw.githubusercontent.com/adyoull/riscos-tubesearch/main/ejs.json", NULL },
+  { "ejs_update", "daily", NULL },            /* daily, never */
+  { "ejs_download_base", "https://github.com/yt-dlp/ejs/releases/download", NULL },
   { NULL, NULL, NULL }
 };
 
@@ -378,6 +394,133 @@ yt_req *yt_req_player (const char *video_id)
       return NULL;
     }
   return r;
+}
+
+yt_req *yt_req_player_tv (const char *video_id, int sts)
+{
+  sb b = { 0 }, h = { 0 };
+  char cpn[17];
+  random_id (cpn, 16);
+  sb_str (&b, "{\"context\":{\"client\":{\"clientName\":\"TVHTML5\",\"clientVersion\":");
+  sb_quote (&b, CFG ("tv_client_version"));
+  sb_str (&b, ",\"deviceMake\":");
+  sb_quote (&b, CFG ("tv_device_make"));
+  sb_str (&b, ",\"deviceModel\":");
+  sb_quote (&b, CFG ("tv_device_model"));
+  sb_str (&b, ",\"osName\":");
+  sb_quote (&b, CFG ("tv_os_name"));
+  sb_str (&b, ",\"osVersion\":");
+  sb_quote (&b, CFG ("tv_os_version"));
+  sb_str (&b, ",\"userAgent\":");
+  sb_quote (&b, CFG ("tv_user_agent"));
+  sb_str (&b, ",\"hl\":");
+  sb_quote (&b, CFG ("language"));
+  sb_str (&b, ",\"gl\":");
+  sb_quote (&b, CFG ("region"));
+  if (yt_visitor)
+    {
+      sb_str (&b, ",\"visitorData\":");
+      sb_quote (&b, yt_visitor);
+    }
+  sb_str (&b, ",\"utcOffsetMinutes\":0},\"request\":{\"internalExperimentFlags\":[],\"useSsl\":true},"
+              "\"user\":{\"lockedSafetyMode\":false}},\"videoId\":");
+  sb_quote (&b, video_id);
+  sb_printf (&b, ",\"cpn\":\"%s\",\"playbackContext\":{\"contentPlaybackContext\":{\"html5Preference\":\"HTML5_PREF_WANTS\"", cpn);
+  if (sts > 0)
+    sb_printf (&b, ",\"signatureTimestamp\":%d", sts);
+  sb_str (&b, "}},\"contentCheckOk\":true,\"racyCheckOk\":true}");
+  sb_printf (&h, "Content-Type: application/json\r\n"
+                 "Origin: https://www.youtube.com\r\n"
+                 "User-Agent: %s\r\n"
+                 "X-YouTube-Client-Name: 7\r\n"
+                 "X-YouTube-Client-Version: %s\r\n"
+                 "Accept-Language: %s, en;q=0.9\r\n",
+             CFG ("tv_user_agent"), CFG ("tv_client_version"), CFG ("language"));
+  if (*CFG ("consent_cookie"))
+    sb_printf (&h, "Cookie: %s\r\n", CFG ("consent_cookie"));
+  if (yt_visitor)
+    sb_printf (&h, "X-Goog-Visitor-Id: %s\r\n", yt_visitor);
+  return new_req (CFG ("tv_host"), "player", sb_done (&b), sb_done (&h));
+}
+
+/* ---- the player JavaScript ------------------------------------------------- */
+
+static int is_hex (int c)
+{
+  return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+}
+
+int yt_player_id (const char *t, size_t len, char id[16])
+{
+  /* ".../s/player/854a788e/..." or, escaped in the iframe API's JS, "player\/854a788e\/" */
+  for (size_t i = 0; i + 7 < len; i++)
+    if (!strncmp (t + i, "player", 6))
+      {
+        size_t j = i + 6, k = 0;
+        if (j < len && t[j] == '\\')
+          j++;
+        if (j >= len || t[j] != '/')
+          continue;
+        j++;
+        while (j + k < len && k < 15 && is_hex ((unsigned char) t[j + k]))
+          k++;
+        if (k >= 8 && j + k < len && (t[j + k] == '/' || t[j + k] == '\\'))
+          {
+            memcpy (id, t + j, k);
+            id[k] = 0;
+            return 0;
+          }
+      }
+  return -1;
+}
+
+void yt_player_path (const char *id, char *path, size_t size)
+{
+  snprintf (path, size, "/s/player/%s/%s", id, CFG ("player_js_variant"));
+}
+
+int yt_player_sts (const char *t, size_t len)
+{
+  /* (?:signatureTimestamp|sts)\s*:\s*([0-9]{5}), as yt-dlp looks for it */
+  static const char *const keys[2] = { "signatureTimestamp", "sts" };
+  for (int k = 0; k < 2; k++)
+    {
+      size_t kl = strlen (keys[k]);
+      for (size_t i = 0; i + kl + 6 < len; i++)
+        {
+          size_t j;
+          int digits = 0, v = 0;
+          if (memcmp (t + i, keys[k], kl))
+            continue;
+          if (k == 1 && i > 0 && ((t[i - 1] >= 'a' && t[i - 1] <= 'z') || (t[i - 1] >= 'A' && t[i - 1] <= 'Z')))
+            continue;
+          j = i + kl;
+          while (j < len && (t[j] == ' ' || t[j] == '\t' || t[j] == '\n'))
+            j++;
+          if (j >= len || t[j] != ':')
+            continue;
+          j++;
+          while (j < len && (t[j] == ' ' || t[j] == '\t' || t[j] == '\n'))
+            j++;
+          while (j < len && t[j] >= '0' && t[j] <= '9' && digits < 6)
+            {
+              v = v * 10 + (t[j++] - '0');
+              digits++;
+            }
+          if (digits == 5)
+            return v;
+        }
+    }
+  return 0;
+}
+
+const char *yt_web_get_headers (void)
+{
+  static char h[512];
+  snprintf (h, sizeof h, "User-Agent: %s\r\nAccept-Language: %s, en;q=0.9\r\n%s%s%s",
+            CFG ("web_user_agent"), CFG ("language"),
+            *CFG ("consent_cookie") ? "Cookie: " : "", CFG ("consent_cookie"), *CFG ("consent_cookie") ? "\r\n" : "");
+  return h;
 }
 
 /* ---- lists -------------------------------------------------------------- */
@@ -808,16 +951,212 @@ static int default_audio (const jnode *f)
   return !t || j_true (j_get (t, "audioIsDefault"));
 }
 
+/* ---- addresses and their challenges ---------------------------------------- */
+
+static int hexval (int c)
+{
+  return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+}
+
+/* n bytes of x-www-form-urlencoded text, decoded (malloc'd). */
+static char *url_decode (const char *t, size_t n)
+{
+  char *o = malloc (n + 1), *q = o;
+  if (!o)
+    return NULL;
+  for (size_t i = 0; i < n; i++)
+    {
+      if (t[i] == '%' && i + 2 < n && hexval (t[i + 1]) >= 0 && hexval (t[i + 2]) >= 0)
+        {
+          *q++ = (char) (hexval (t[i + 1]) * 16 + hexval (t[i + 2]));
+          i += 2;
+        }
+      else
+        *q++ = t[i] == '+' ? ' ' : t[i];
+    }
+  *q = 0;
+  return o;
+}
+
+/* s percent-encoded for a query value, appended to b. */
+static void sb_url_encode (sb *b, const char *t)
+{
+  static const char hex[] = "0123456789ABCDEF";
+  for (; *t; t++)
+    {
+      unsigned char c = (unsigned char) *t;
+      if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~')
+        sb_add (b, (const char *) &c, 1);
+      else
+        {
+          char e[3] = { '%', hex[c >> 4], hex[c & 15] };
+          sb_add (b, e, 3);
+        }
+    }
+}
+
+/* The value of key in a query string ("a=1&b=2", or after the '?' of an
+   address), decoded and malloc'd; NULL if absent. */
+static char *query_get (const char *q, const char *key)
+{
+  size_t kl = strlen (key);
+  const char *p = strchr (q, '?');
+  p = p ? p + 1 : q;
+  while (*p)
+    {
+      size_t l = strcspn (p, "&");
+      if (l > kl && !strncmp (p, key, kl) && p[kl] == '=')
+        return url_decode (p + kl + 1, l - kl - 1);
+      p += l;
+      if (*p == '&')
+        p++;
+    }
+  return NULL;
+}
+
+/* A format's address, and its challenges (each malloc'd, or NULL). */
+static int format_address (const jnode *f, char **url, char **s_out, char **sp_out, char **n_out)
+{
+  const char *direct = j_str (j_get (f, "url"));
+  const char *cipher = j_str (j_get (f, "signatureCipher"));
+  *url = *s_out = *sp_out = *n_out = NULL;
+  if (!cipher)
+    cipher = j_str (j_get (f, "cipher"));
+  if (direct)
+    *url = strdup (direct);
+  else if (cipher)
+    {
+      *url = query_get (cipher, "url");
+      *s_out = query_get (cipher, "s");
+      *sp_out = query_get (cipher, "sp");
+      if (*s_out && !*sp_out)
+        *sp_out = strdup ("signature");
+    }
+  if (!*url || (cipher && !direct && !*s_out))
+    {
+      free (*url); free (*s_out); free (*sp_out);
+      *url = *s_out = *sp_out = NULL;
+      return -1;
+    }
+  *n_out = query_get (*url, "n");
+  return 0;
+}
+
+int yt_play_needs_solving (const yt_play *p)
+{
+  return p->video_s || p->video_n || p->audio_s || p->audio_n;
+}
+
+static void add_unique (const char **list, int *count, const char *v)
+{
+  if (!v)
+    return;
+  for (int i = 0; i < *count; i++)
+    if (!strcmp (list[i], v))
+      return;
+  list[(*count)++] = v;
+}
+
+void yt_play_challenges (const yt_play *p, const char *n[2], int *nn, const char *sig[2], int *nsig)
+{
+  *nn = *nsig = 0;
+  add_unique (n, nn, p->video_n);
+  add_unique (n, nn, p->audio_n);
+  add_unique (sig, nsig, p->video_s);
+  add_unique (sig, nsig, p->audio_s);
+}
+
+static const char *answer_for (const char *v, const char *const *in, const char *const *out, int count)
+{
+  for (int i = 0; i < count; i++)
+    if (!strcmp (in[i], v))
+      return out[i];
+  return NULL;
+}
+
+/* url with n= replaced by n_new and &sp=sig added (malloc'd). */
+static char *rebuild (const char *url, const char *n_new, const char *sp, const char *sig)
+{
+  sb b = { 0 };
+  const char *q = strchr (url, '?');
+  if (!q)
+    return NULL;
+  int first = 1;
+  sb_add (&b, url, (size_t) (q - url) + 1);
+  for (const char *p = q + 1; *p;)
+    {
+      size_t l = strcspn (p, "&");
+      if (n_new && l >= 2 && p[0] == 'n' && p[1] == '=')
+        {
+          sb_str (&b, first ? "n=" : "&n=");
+          sb_url_encode (&b, n_new);
+        }
+      else
+        {
+          if (!first)
+            sb_add (&b, "&", 1);
+          sb_add (&b, p, l);
+        }
+      first = 0;
+      p += l;
+      if (*p == '&')
+        p++;
+    }
+  if (sp && sig)
+    {
+      sb_str (&b, "&");
+      sb_url_encode (&b, sp);
+      sb_str (&b, "=");
+      sb_url_encode (&b, sig);
+    }
+  return sb_done (&b);
+}
+
+int yt_play_apply (yt_play *p, const char *const *n_out, const char *const *sig_out)
+{
+  const char *n_in[2], *sig_in[2];
+  int nn, nsig;
+  char *v, *a = NULL;
+  yt_play_challenges (p, n_in, &nn, sig_in, &nsig);
+  v = rebuild (p->video_url,
+               p->video_n ? answer_for (p->video_n, n_in, n_out, nn) : NULL, p->video_sp,
+               p->video_s ? answer_for (p->video_s, sig_in, sig_out, nsig) : NULL);
+  if (p->audio_url)
+    a = rebuild (p->audio_url,
+                 p->audio_n ? answer_for (p->audio_n, n_in, n_out, nn) : NULL, p->audio_sp,
+                 p->audio_s ? answer_for (p->audio_s, sig_in, sig_out, nsig) : NULL);
+  if (!v || (p->audio_url && !a))
+    {
+      free (v);
+      free (a);
+      return -1;
+    }
+  free (p->video_url);
+  p->video_url = v;
+  if (a)
+    {
+      free (p->audio_url);
+      p->audio_url = a;
+    }
+  free (p->video_s); free (p->video_sp); free (p->video_n);
+  free (p->audio_s); free (p->audio_sp); free (p->audio_n);
+  p->video_s = p->video_sp = p->video_n = p->audio_s = p->audio_sp = p->audio_n = NULL;
+  return 0;
+}
+
+int yt_player_final;
+
 int yt_parse_player (const char *json, size_t len, int maxq, yt_play *p, char *err, size_t errlen)
 {
   char jerr[96], buf[512];
   jdoc *d = json_parse (json, len, jerr, sizeof jerr);
   const jnode *root, *ps, *sd, *af, *best_v = NULL, *best_a = NULL, *f;
   const char *status, *hls;
-  int best_q = 0, signed_only = 0;
+  int best_q = 0;
   long best_vb = 0, best_ab = 0;
 
   memset (p, 0, sizeof *p);
+  yt_player_final = 0;
   if (!d)
     {
       snprintf (err, errlen, "YouTube's answer wasn't readable (%s)", jerr);
@@ -825,6 +1164,9 @@ int yt_parse_player (const char *json, size_t len, int maxq, yt_play *p, char *e
     }
   root = json_root (d);
   ps = j_get (root, "playabilityStatus");
+  /* ERROR: unavailable, removed, private; another client won't help.
+     (LOGIN_REQUIRED, UNPLAYABLE...: it might.) */
+  yt_player_final = j_str (j_get (ps, "status")) && !strcmp (j_str (j_get (ps, "status")), "ERROR");
   status = j_str (j_get (ps, "status"));
   if (j_get (root, "error"))
     {
@@ -860,12 +1202,8 @@ int yt_parse_player (const char *json, size_t len, int maxq, yt_play *p, char *e
           long rate = j_long (j_get (f, "bitrate"), 0);
           if (!mime)
             continue;
-          if (!j_str (j_get (f, "url")))
-            {
-              if (j_get (f, "signatureCipher") || j_get (f, "cipher"))
-                signed_only = 1;
-              continue;
-            }
+          if (!j_str (j_get (f, "url")) && !j_str (j_get (f, "signatureCipher")) && !j_str (j_get (f, "cipher")))
+            continue;
           if (!strncmp (mime, "video/mp4", 9) && strstr (mime, "avc1"))
             {
               int q = lines_of (f);
@@ -894,8 +1232,12 @@ int yt_parse_player (const char *json, size_t len, int maxq, yt_play *p, char *e
     {
       const char *mime = j_str (j_get (best_v, "mimeType"));
       const char *c = mime ? strstr (mime, "codecs=\"") : NULL;
-      p->video_url = strdup (j_str (j_get (best_v, "url")));
-      p->audio_url = strdup (j_str (j_get (best_a, "url")));
+      if (format_address (best_v, &p->video_url, &p->video_s, &p->video_sp, &p->video_n)
+          || format_address (best_a, &p->audio_url, &p->audio_s, &p->audio_sp, &p->audio_n))
+        {
+          free (p->video_url);
+          p->video_url = NULL;
+        }
       p->quality = best_q;
       if (c)
         {
@@ -923,9 +1265,7 @@ int yt_parse_player (const char *json, size_t len, int maxq, yt_play *p, char *e
   json_free (d);
   if (!p->video_url && !p->hls_url)
     {
-      snprintf (err, errlen, signed_only
-                ? "This video's addresses are scrambled (they need YouTube's JavaScript, which TubeSearch can't run yet)"
-                : "YouTube gave no H.264 streams for this video");
+      snprintf (err, errlen, "YouTube gave no H.264 streams for this video");
       yt_play_free (p);
       return -1;
     }
@@ -940,6 +1280,8 @@ int yt_parse_player (const char *json, size_t len, int maxq, yt_play *p, char *e
 
 void yt_play_free (yt_play *p)
 {
+  free (p->video_s); free (p->video_sp); free (p->video_n);
+  free (p->audio_s); free (p->audio_sp); free (p->audio_n);
   free (p->title);
   free (p->video_url);
   free (p->audio_url);

@@ -1,0 +1,21 @@
+--- a/quickjs.c	2026-10-12 22:56:43.211580642 +0100
++++ b/quickjs.c	2026-10-12 22:56:43.235778793 +0100
+@@ -68,7 +68,7 @@
+ 
+ /* define to include Atomics.* operations which depend on the OS
+    threads */
+-#if !defined(__EMSCRIPTEN__)
++#if !defined(__EMSCRIPTEN__) && !defined(__riscos)
+ #define CONFIG_ATOMICS
+ #endif
+ 
+@@ -2140,7 +2140,8 @@
+     return malloc_size(ptr);
+ #elif defined(_WIN32)
+     return _msize((void *)ptr);
+-#elif defined(__EMSCRIPTEN__)
++#elif defined(__EMSCRIPTEN__) || defined(__riscos)
++    /* (RISC OS: UnixLib says it is glibc but has no malloc_usable_size) */
+     return 0;
+ #elif defined(__linux__) || defined(__GLIBC__)
+     return malloc_usable_size((void *)ptr);

@@ -1,5 +1,6 @@
 /* tscli - TubeSearch's YouTube code from the command line, for trying it out
-   and finding faults (on RISC OS in a TaskWindow, or on Linux):
+   and finding faults (on RISC OS in a TaskWindow, or on Linux), and
+   TubeSearch's JavaScript helper:
 
      tscli search <words...>     videos and channels found
      tscli related <video ID>    the videos YouTube suggests next to it
@@ -8,24 +9,52 @@
                                    chooses the streams and writes what Reel
                                    reads (yt-dlp's JSON) to file (default:
                                    standard output); then *Reel file
+     tscli update                checks for newer solver scripts now
+     tscli solve <job> <answer>  answers YouTube's challenges (solvejob.h):
+                                   what !TubeSearch starts as a task of its
+                                   own (with -wimp) to do that
    Options before the command:
      -more N      fetch N more parts of a list
      -dump DIR    keep YouTube's raw answers in DIR
      -config FILE read settings (as !TubeSearch's Config file)
+     -client C    the streams from: auto (the player client, then the TV
+                  app), player, or tv
+     -ejs DIR     the bundled solver scripts (lib, core, Version)
+     -state DIR   where newer solver scripts are kept
+     -work DIR    the TV fallback's files (default: <Wimp$ScrapDir>.TubeSearch)
+     -wimp        (solve) be a desktop task, polling while it works
 
    Part of TubeSearch. MIT licence. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <sys/stat.h>
 #include "api.h"
+#include "ejsupd.h"
 #include "http.h"
+#include "solvejob.h"
 #include "text.h"
 #include "transport.h"
 #include "yt.h"
 
+#ifdef __riscos
+#include <kernel.h>
+#include <swis.h>
+#include <unixlib/local.h>
+/* every file name given is a RISC OS one */
+int __riscosify_control = __RISCOSIFY_NO_PROCESS;
+/* the solver's memory (about 110 MB for a new player) in a dynamic area */
+const char *const __dynamic_da_name = "TubeSearch Solver";
+int __dynamic_da_max_size = 256 << 20;
+#define SEP "."
+#else
+#define SEP "/"
+#endif
+
 static int finished, failed;
 static char *out_json;
+static char work_dir[400], cache_dir[440];
 
 static void list_done (int added, const char *err, void *ctx)
 {
@@ -86,39 +115,194 @@ static void print_list (const yt_list *l, int from)
 
 static int usage (void)
 {
-  fprintf (stderr, "usage: tscli [-more N] [-dump DIR] [-config FILE]\n"
-                   "               search WORDS... | related ID | channel ID | play ID [LINES] [FILE]\n");
+  fprintf (stderr, "usage: tscli [-more N] [-dump DIR] [-config FILE] [-client C] [-ejs DIR] [-state DIR] [-work DIR]\n"
+                   "             search WORDS... | related ID | channel ID | play ID [LINES] [FILE]\n"
+                   "             | update | [-wimp] solve JOB ANSWER\n");
   return 2;
+}
+
+/* ---- the TV fallback, with the solve done here ---------------------------- */
+
+static int inline_solve (const char *job, const char *out, void (*done) (void *), void *ctx)
+{
+  solvejob_run (job, out, NULL, NULL);
+  done (ctx);
+  return 0;
+}
+
+static void solve_cancel (void *ctx)
+{
+  (void) ctx;
+}
+
+static void progress (const char *what, void *ctx)
+{
+  (void) ctx;
+  fprintf (stderr, "tscli: %s\n", what);
+}
+
+static const api_tv_host tv_host = {
+  work_dir, cache_dir, ejsupd_scripts, inline_solve, solve_cancel, ejsupd_failed, progress
+};
+
+static void update_done (int updated, const char *msg, void *ctx)
+{
+  (void) ctx;
+  fprintf (stderr, "tscli: %s\n", msg);
+  finished = 1;
+  (void) updated;
+}
+
+/* ---- the helper: a desktop task polling while QuickJS works ----------------- */
+
+#ifdef __riscos
+static int wimp_task;
+
+static int wimp_tick (void *ctx)
+{
+  static int last;
+  int now = 0, block[64], reason;
+  (void) ctx;
+  _swix (OS_ReadMonotonicTime, _OUT (0), &now);
+  if (now - last < 4)
+    return 0;
+  last = now;
+  /* null events and messages only: the helper has no windows */
+  if (_swix (Wimp_Poll, _INR (0, 1) | _OUT (0), 0x3832, block, &reason))
+    return 0;
+  if ((reason == 17 || reason == 18) && block[4] == 0)
+    return 1;                               /* Message_Quit: stop */
+  return 0;
+}
+
+static int helper_solve (const char *job, const char *out)
+{
+  static const int messages[] = { 0 };
+  int rc;
+  if (_swix (Wimp_Initialise, _INR (0, 3) | _OUT (1), 310, 0x4B534154, "TubeSearch solver", messages, &wimp_task))
+    return solvejob_run (job, out, NULL, NULL) ? 1 : 0;
+  rc = solvejob_run (job, out, wimp_tick, NULL);
+  _swix (Wimp_CloseDown, _INR (0, 1), wimp_task, 0x4B534154);
+  return rc ? 1 : 0;
+}
+#endif
+
+static void default_dirs (const char *work)
+{
+#ifdef __riscos
+  const char *scrap = getenv ("Wimp$ScrapDir");
+  snprintf (work_dir, sizeof work_dir, "%s", work ? work : "");
+  if (!work_dir[0])
+    snprintf (work_dir, sizeof work_dir, "%s.TubeSearch", scrap && *scrap ? scrap : "<Wimp$ScrapDir>");
+#else
+  snprintf (work_dir, sizeof work_dir, "%s", work ? work : getenv ("TUBESEARCH_WORK") ? getenv ("TUBESEARCH_WORK") : "/tmp/tubesearch");
+#endif
+  snprintf (cache_dir, sizeof cache_dir, "%s" SEP "Players", work_dir);
+  mkdir (work_dir, 0777);
+  mkdir (cache_dir, 0777);
 }
 
 int main (int argc, char **argv)
 {
   char err[200], query[512];
-  int more = 0, a = 1;
+  const char *ejs_dir = NULL, *state_dir = NULL, *work = NULL;
+  int more = 0, a = 1, wimp = 0;
   srand ((unsigned) time (NULL));
   while (a < argc && argv[a][0] == '-')
     {
-      if (!strcmp (argv[a], "-more") && a + 1 < argc)
+      if (!strcmp (argv[a], "-wimp"))
+        {
+          wimp = 1;
+          a++;
+          continue;
+        }
+      if (a + 1 >= argc)
+        return usage ();
+      if (!strcmp (argv[a], "-more"))
         more = atoi (argv[a + 1]);
-      else if (!strcmp (argv[a], "-dump") && a + 1 < argc)
+      else if (!strcmp (argv[a], "-dump"))
         api_dump_dir = argv[a + 1];
-      else if (!strcmp (argv[a], "-config") && a + 1 < argc)
+      else if (!strcmp (argv[a], "-config"))
         {
           if (yt_config_load (argv[a + 1]) < 0)
             fprintf (stderr, "tscli: can't read %s\n", argv[a + 1]);
         }
+      else if (!strcmp (argv[a], "-client"))
+        yt_config_set ("stream_client", argv[a + 1]);
+      else if (!strcmp (argv[a], "-ejs"))
+        ejs_dir = argv[a + 1];
+      else if (!strcmp (argv[a], "-state"))
+        state_dir = argv[a + 1];
+      else if (!strcmp (argv[a], "-work"))
+        work = argv[a + 1];
       else
         return usage ();
       a += 2;
     }
-  if (a + 1 >= argc)
+  if (a >= argc)
     return usage ();
+
+  if (!strcmp (argv[a], "solve"))
+    {
+      if (a + 2 >= argc)
+        return usage ();
+#ifdef __riscos
+      if (wimp)
+        return helper_solve (argv[a + 1], argv[a + 2]);
+#endif
+      (void) wimp;
+      if (solvejob_run (argv[a + 1], argv[a + 2], NULL, NULL))
+        {
+          fprintf (stderr, "tscli: the solve failed (the answer file says why)\n");
+          return 1;
+        }
+      return 0;
+    }
+
   if (transport_check (err, sizeof err))
     {
       fprintf (stderr, "tscli: %s\n", err);
       return 1;
     }
   http_init (&transport_system);
+  default_dirs (work);
+#ifdef __riscos
+  {
+    const char *dir = getenv ("TubeSearch$Dir"), *choices = getenv ("Choices$Write");
+    static char b[400], st[400];
+    if (!ejs_dir && dir)
+      snprintf (b, sizeof b, "%s.Resources.ejs", dir), ejs_dir = b;
+    if (!state_dir && choices)
+      {
+        snprintf (st, sizeof st, "%s.TubeSearch", choices);
+        mkdir (st, 0777);
+        snprintf (st, sizeof st, "%s.TubeSearch.ejs", choices);
+        mkdir (st, 0777);
+        state_dir = st;
+      }
+  }
+#endif
+  ejsupd_init (ejs_dir ? ejs_dir : "ejs-bundle", state_dir);
+  api_set_tv_host (&tv_host);
+
+  if (!strcmp (argv[a], "update"))
+    {
+      if (!state_dir)
+        {
+          fprintf (stderr, "tscli: update needs -state DIR\n");
+          return 2;
+        }
+      finished = 0;
+      ejsupd_check (1, update_done, NULL);
+      while (!finished && http_poll ())
+        transport_wait (1);
+      if (!finished)
+        fprintf (stderr, "tscli: the update check didn't finish\n");
+      http_shutdown ();
+      return finished ? 0 : 1;
+    }
+  if (a + 1 >= argc)
+    return usage ();
 
   if (!strcmp (argv[a], "play"))
     {

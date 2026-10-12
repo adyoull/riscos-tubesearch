@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include "fake.h"
 #define JPEG_Info 0x49980          /* (not in UnixLib's swis.h) */
 #define JPEG_PlotScaled 0x49982
@@ -19,6 +20,7 @@
 #include "../src/transport.h"
 
 static const char *fixdir;
+static char scrap[300];
 
 /* ---- the fake Wimp ------------------------------------------------------ */
 
@@ -38,6 +40,37 @@ static int sprite_outputs, sprite_plots, jpeg_plots, menus_made;
 static void *last_menu;
 
 static const _kernel_oserror err_bad = { 1, "Bad" };
+
+/* The JavaScript helper (tscli solve), faked: it answers the challenges
+   with the answers node gives for player 854a788e. */
+enum { HELPER_ANSWER, HELPER_LATER, HELPER_NEVER };
+static int helper_mode, helper_starts, quit_sent_to;
+static char helper_cmd[1000], helper_cache[600];
+static const char helper_answer[] =
+  "{\"n\":{\"IlLiA21ny7gqA2m4p37\":\"RL7twTMlYAhbWlqMF\",\"eabGFpsUKuWHXGh6FR4\":\"OtjoLvmzT_c2ob_ei\"},"
+  "\"sig\":{\"NJAJEij0EwRgIhAI0KExTgjfPk-MPM9MAdzyyPRt=BM8-XO5tm5hlMCSVpAiEAv7eP3CURqZNSPow8BXXAoazVoXgeMP7gH9BdylHCwgw=gwzz\":"
+  "\"zzwg=wgwCHlydB9Hg7PMegXoVzaoAXXB8woPSNZqRUC3Pe7vAEiApVSCMlh5mt5OX-NMB=tRPyyzdAM9MPM-kPfjgTxEK0IAhIgRwE0jiEJA\"}}";
+
+static int fake_helper (const char *cmd)
+{
+  char job[500], out[500];
+  FILE *f;
+  snprintf (helper_cmd, sizeof helper_cmd, "%s", cmd);
+  helper_starts++;
+  if (sscanf (strstr (cmd, ".Solve ") + 7, "%499s %499s", job, out) != 2)
+    return 0;
+  if (helper_mode == HELPER_ANSWER && (f = fopen (out, "w")))
+    {
+      fputs (helper_answer, f);
+      fclose (f);
+      if (helper_cache[0] && (f = fopen (helper_cache, "w")))   /* the prepared player it keeps */
+        {
+          fputs ("prepared", f);
+          fclose (f);
+        }
+    }
+  return 77;                                         /* its task handle */
+}
 
 static const _kernel_oserror *wimp (int swi, int r[10])
 {
@@ -138,7 +171,19 @@ static const _kernel_oserror *wimp (int swi, int r[10])
       snprintf (report, sizeof report, "%s", ((const _kernel_oserror *) r[0])->errmess);
       r[1] = 1;
       return NULL;
-    case Wimp_StartTask: snprintf (started, sizeof started, "%s", (const char *) r[0]); return NULL;
+    case Wimp_StartTask:
+      if (strstr ((const char *) r[0], ".Solve "))
+        r[0] = fake_helper ((const char *) r[0]);
+      else
+        {
+          snprintf (started, sizeof started, "%s", (const char *) r[0]);
+          r[0] = 0;
+        }
+      return NULL;
+    case Wimp_SendMessage:
+      if (r[0] == 17 && ((int *) r[1])[4] == 0)
+        quit_sent_to = r[2];
+      return NULL;
     }
   return &err_bad;
 }
@@ -154,6 +199,17 @@ static const _kernel_oserror *os (int swi, int r[10])
     case OS_Plot: return NULL;
     case ColourTrans_SetGCOL: return NULL;
     case OS_File:
+      if (r[0] == 8)                                 /* create a directory */
+        {
+          mkdir ((const char *) r[1], 0777);
+          return NULL;
+        }
+      if (r[0] == 17)                                /* read catalogue: 0 none, 1 file, 2 directory */
+        {
+          struct stat st;
+          r[0] = stat ((const char *) r[1], &st) ? 0 : S_ISDIR (st.st_mode) ? 2 : 1;
+          return NULL;
+        }
       if (r[0] != 10)
         return &err_bad;
       snprintf (saved_path, sizeof saved_path, "%s", (const char *) r[1]);
@@ -195,7 +251,7 @@ static const _kernel_oserror *os (int swi, int r[10])
 
 static void install (void)
 {
-  static const int w[] = { Wimp_Initialise, Wimp_CreateIcon, Wimp_CreateWindow, Wimp_OpenWindow,
+  static const int w[] = { Wimp_SendMessage, Wimp_Initialise, Wimp_CreateIcon, Wimp_CreateWindow, Wimp_OpenWindow,
     Wimp_GetWindowState, Wimp_CloseWindow, Wimp_SetExtent, Wimp_ForceRedraw, Wimp_SetIconState,
     Wimp_SetCaretPosition, Wimp_ProcessKey, Wimp_CloseDown, Wimp_RedrawWindow, Wimp_GetRectangle,
     Wimp_TextOp, Wimp_CreateMenu, Wimp_GetPointerInfo, Wimp_ReportError, Wimp_StartTask, 0 };
@@ -234,13 +290,33 @@ static char *load (const char *name, size_t *len)
   return b;
 }
 
+static int iframe_requests, playerjs_requests, tv_requests, manifest_requests;
+
 static void answer (fconn *c, const char *req)
 {
   char *body;
   size_t len;
   char head[128];
+  int code = 200;
   const char *json = strstr (req, "\r\n\r\n") + 4;
-  if (!strncmp (req, "GET ", 4))
+  if (!strncmp (req, "GET /iframe_api ", 16))
+    {
+      iframe_requests++;
+      body = load ("iframe_api.js", &len);
+    }
+  else if (!strncmp (req, "GET /s/player/854a788e/player_ias.vflset/en_US/base.js ", 55))
+    {
+      playerjs_requests++;
+      body = load ("player_854a788e.js", &len);
+    }
+  else if (strstr (req, "Host: raw.githubusercontent.com"))
+    {
+      manifest_requests++;                           /* (the daily solver check: not here) */
+      body = strdup ("404: Not Found");
+      len = strlen (body);
+      code = 404;
+    }
+  else if (!strncmp (req, "GET ", 4))
     {
       picture_requests++;
       body = strdup ("\xFF\xD8\xFF\xE0 a JPEG of sorts");
@@ -257,6 +333,17 @@ static void answer (fconn *c, const char *req)
         body = load ("next.json", &len);
       else if (strstr (req, "/browse"))
         body = load (strstr (json, "\"continuation\"") ? "channel_2.json" : "channel_1.json", &len);
+      else if (strstr (req, "/player") && strstr (json, "\"TVHTML5\""))
+        {
+          tv_requests++;
+          body = load ("player_tv.json", &len);
+        }
+      else if (strstr (req, "/player") && strstr (json, "BotCheck001"))
+        {
+          player_requests++;
+          body = strdup ("{\"playabilityStatus\":{\"status\":\"LOGIN_REQUIRED\",\"reason\":\"Sign in to confirm you\\u2019re not a bot\"}}");
+          len = strlen (body);
+        }
       else if (strstr (req, "/player"))
         {
           player_requests++;
@@ -274,7 +361,8 @@ static void answer (fconn *c, const char *req)
           len = 2;
         }
     }
-  snprintf (head, sizeof head, "HTTP/1.1 200 OK\r\nContent-Length: %lu\r\n\r\n", (unsigned long) len);
+  snprintf (head, sizeof head, "HTTP/1.1 %d %s\r\nContent-Length: %lu\r\n\r\n", code, code == 200 ? "OK" : "Not Found",
+            (unsigned long) len);
   c->tx = realloc (c->tx, c->txlen + strlen (head) + len);
   memcpy (c->tx + c->txlen, head, strlen (head));
   memcpy (c->tx + c->txlen + strlen (head), body, len);
@@ -331,11 +419,13 @@ static int block[64];
 
 static void pump (void)
 {
+  int quit = 0;
   for (int i = 0; i < 10000 && ui_busy (); i++)
     {
       net_clock++;
-      CHECK (ui_event (0, block) == 0, "a null event doesn't quit");
+      quit |= ui_event (0, block);
     }
+  CHECK (!quit, "a null event doesn't quit");
 }
 
 static void redraw (void)
@@ -377,9 +467,29 @@ int main (int argc, char **argv)
   fixdir = argc > 1 ? argv[1] : "tests/fixtures";
   fake_reset ();
   install ();
-  setenv ("Wimp$ScrapDir", "RAM::RamDisc0.$.Scrap", 1);
+  /* RISC OS names over a Linux directory: "<tmp>/scrap.TubeSearch..." */
+  {
+    static char tmp[] = "/tmp/test_ui.XXXXXX";
+    char p[600];
+    FILE *f;
+    if (!mkdtemp (tmp))
+      return 1;
+    snprintf (scrap, sizeof scrap, "%s/scrap", tmp);
+    setenv ("Wimp$ScrapDir", scrap, 1);
+    snprintf (p, sizeof p, "%s/choices", tmp);
+    setenv ("Choices$Write", p, 1);
+    snprintf (p, sizeof p, "%s/ts", tmp);
+    setenv ("TubeSearch$Dir", p, 1);
+    /* the bundled solver scripts (the fake helper doesn't run them) */
+    snprintf (p, sizeof p, "%s/ts.Resources.ejs.Version", tmp);
+    if ((f = fopen (p, "w"))) { fputs ("0.8.0\n", f); fclose (f); }
+    snprintf (p, sizeof p, "%s/ts.Resources.ejs.lib", tmp);
+    if ((f = fopen (p, "w"))) { fputs ("var lib = {};", f); fclose (f); }
+    snprintf (p, sizeof p, "%s/ts.Resources.ejs.core", tmp);
+    if ((f = fopen (p, "w"))) { fputs ("var jsc;", f); fclose (f); }
+    snprintf (helper_cache, sizeof helper_cache, "%s.TubeSearch.Players.854a788e-0-8-0", scrap);
+  }
   setenv ("Alias$Reel", "/<Reel$Dir> %*0", 1);
-  unsetenv ("TubeSearch$Dir");
 
   CHECK (ui_init () == 0, "starts");
   CHECK (iconbar_icons == 1 && nwins == 3, "an icon bar icon and three windows");
@@ -452,10 +562,15 @@ int main (int argc, char **argv)
   click_tile (0, 100, 100, 4);
   pump ();
   CHECK (player_requests == 1, "the player asked for the streams");
-  CHECK (!strcmp (saved_path, "RAM::RamDisc0.$.Scrap.TubeSearchPlay1"), "Reel's file in the scrap directory");
+  {
+    char want[400];
+    snprintf (want, sizeof want, "%s.TubeSearchPlay1", scrap);
+    CHECK (!strcmp (saved_path, want), "Reel's file in the scrap directory");
+    snprintf (want, sizeof want, "Reel %s.TubeSearchPlay1", scrap);
+    CHECK (!strcmp (started, want), "Reel started with it");
+  }
   CHECK (saved_data && strstr (saved_data, "\"requested_formats\"") && strstr (saved_data, "itag=137")
          && strstr (saved_data, "itag=140"), "the 1080p video and the AAC sound");
-  CHECK (!strcmp (started, "Reel RAM::RamDisc0.$.Scrap.TubeSearchPlay1"), "Reel started with it");
   CHECK (strstr (status (), "Playing 1080p") != NULL, "the status says it's playing");
 
   /* Adjust: related videos */
@@ -531,6 +646,91 @@ int main (int argc, char **argv)
   type_and_search ("youtu.be/BADBADBADBA");
   pump ();
   CHECK (strstr (report, "Video unavailable") != NULL, "the reason is reported");
+
+  CHECK (iframe_requests == 0 && tv_requests == 0, "an unavailable video doesn't try the TV app");
+  CHECK (manifest_requests == 1, "the solver manifest is checked once at start-up");
+
+  /* ---- the TV fallback: YouTube refuses the player client ("not a bot") ---- */
+  helper_mode = HELPER_ANSWER;
+  started[0] = 0;
+  type_and_search ("youtu.be/BotCheck001");
+  pump ();
+  CHECK (iframe_requests == 1 && playerjs_requests == 1 && tv_requests == 1, "the player's ID, its code, the TV answer");
+  CHECK (helper_starts == 1 && strstr (helper_cmd, "/ts.Solve ") && strstr (helper_cmd, ".TubeSearchJob")
+         && strstr (helper_cmd, ".TubeSearchAns"), "the helper started through the Solve Obey file");
+  CHECK (saved_data && strstr (saved_data, "n=RL7twTMlYAhbWlqMF") && strstr (saved_data, "&sig=zzwg%3Dwgw")
+         && strstr (saved_data, "n=OtjoLvmzT_c2ob_ei"), "Reel gets the answered addresses");
+  CHECK (started[0] && strstr (status (), "Playing"), "and plays them");
+  CHECK (ui_busy (), "busy until the helper has gone");
+  {
+    int msg[6] = { 24, 77, 0, 0, 0x400C3, 0 };     /* Message_TaskCloseDown from the helper */
+    ui_event (17, msg);
+  }
+  CHECK (!ui_busy (), "then idle");
+  {
+    char p[600];
+    struct stat st;
+    snprintf (p, sizeof p, "%s.TubeSearch.TubeSearchJob1", scrap);
+    CHECK (stat (p, &st) != 0, "the job file is removed");
+  }
+  /* again: the player is prepared (the helper keeps it), so no player code */
+  type_and_search ("youtu.be/BotCheck001");
+  pump ();
+  CHECK (playerjs_requests == 1 && tv_requests == 2 && helper_starts == 2, "the prepared player saves fetching the code");
+  {
+    int msg[6] = { 24, 77, 0, 0, 0x400C3, 0 };
+    ui_event (17, msg);
+  }
+
+  /* a solve given up: another video chosen while the helper works */
+  helper_mode = HELPER_LATER;
+  type_and_search ("youtu.be/BotCheck001");
+  for (int i = 0; i < 2000; i++)
+    ui_event (0, block);
+  CHECK (strstr (status (), "Answering YouTube's challenge") != NULL, "the status says what's happening");
+  started[0] = 0;
+  quit_sent_to = 0;
+  type_and_search ("youtu.be/7PIMiDcwNvc");
+  CHECK (quit_sent_to == 77, "the helper is told to stop");
+  for (int i = 0; i < 2000; i++)
+    ui_event (0, block);
+  CHECK (started[0] != 0, "the new video plays (the player client gave addresses)");
+  {
+    int msg[6] = { 24, 77, 0, 0, 0x400C3, 0 };
+    ui_event (17, msg);
+  }
+  CHECK (!ui_busy (), "and the helper's end is noticed");
+
+  /* a helper that ends without answering */
+  helper_mode = HELPER_NEVER;
+  report[0] = 0;
+  type_and_search ("youtu.be/BotCheck001");
+  for (int i = 0; i < 2000; i++)
+    ui_event (0, block);
+  {
+    int msg[6] = { 24, 77, 0, 0, 0x400C3, 0 };
+    ui_event (17, msg);
+  }
+  pump ();
+  CHECK (strstr (report, "JavaScript helper gave no answer") != NULL, "reported");
+
+  /* TV only, with the solver scripts gone: the play ends at once, said so,
+     and nothing is left pointing at it */
+  {
+    char p[600], q[600];
+    snprintf (p, sizeof p, "%s.Resources.ejs.Version", getenv ("TubeSearch$Dir"));
+    snprintf (q, sizeof q, "%s.Resources.ejs.Version-away", getenv ("TubeSearch$Dir"));
+    rename (p, q);
+    yt_config_set ("stream_client", "tv");
+    report[0] = 0;
+    type_and_search ("youtu.be/7PIMiDcwNvc");
+    CHECK (strstr (status (), "scripts are missing") && strstr (report, "scripts are missing"),
+           "the reason stays on the status line");
+    type_and_search ("youtu.be/7PIMiDcwNvc");    /* (a second play cancels nothing stale) */
+    pump ();
+    yt_config_set ("stream_client", "auto");
+    rename (q, p);
+  }
 
   /* Reel not known: said so, nothing started */
   unsetenv ("Alias$Reel");

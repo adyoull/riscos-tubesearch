@@ -14,6 +14,7 @@
 #include <kernel.h>
 #include "thumbs.h"
 #include "http.h"
+#include "yt.h"
 
 #define MAX_THUMBS 150
 #define TAG_THUMB 50
@@ -153,7 +154,7 @@ static void fetched (http_req *r, void *ctx)
 
 static int start_fetch (thumb *t)
 {
-  char host[96];
+  char host[96], headers[400];
   const char *p = t->url, *slash;
   if (strncmp (p, "https://", 8))
     return -1;
@@ -163,9 +164,9 @@ static int start_fetch (thumb *t)
     return -1;
   memcpy (host, p, (size_t) (slash - p));
   host[slash - p] = 0;
-  if (!http_get (host, slash,
-                 "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36\r\n"
-                 "Accept: image/jpeg,image/*;q=0.5\r\n", TAG_THUMB, fetched, t))
+  snprintf (headers, sizeof headers, "User-Agent: %s\r\nAccept: image/jpeg,image/*;q=0.5\r\n",
+            yt_config_get ("thumb_user_agent"));
+  if (!http_get (host, slash, headers, TAG_THUMB, fetched, t))
     return -1;
   t->state = T_LOADING;
   return 0;

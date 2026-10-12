@@ -1,0 +1,8 @@
+QuickJS 2026-06-04 (github.com/bellard/quickjs, commit 3d5e064e9dd6), MIT licence (LICENSE).
+Only the files the engine needs are here (no qjs, qjsc or quickjs-libc: the
+std and os modules are left out on purpose, so scripts can only compute).
+Changed for RISC OS (riscos.patch):
+  - js_def_malloc_usable_size returns 0 on RISC OS: UnixLib defines __GLIBC__
+    but has no malloc_usable_size. (So JS_SetMemoryLimit isn't exact there;
+    running out of memory still ends in a JavaScript exception.)
+  - CONFIG_ATOMICS off on RISC OS (no Atomics.wait, so no pthreads pulled in).

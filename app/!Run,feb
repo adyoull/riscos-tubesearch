@@ -11,6 +11,6 @@ RMEnsure ARMEABISupport 0 Error TubeSearch needs the ARMEABISupport module. Inst
 RMEnsure AcornSSL 0 IfThere System:Modules.Network.URL.AcornSSL Then RMLoad System:Modules.Network.URL.AcornSSL
 RMEnsure AcornSSL 0 Error TubeSearch needs the AcornSSL module (RISC OS 5.28 or later) for secure connections.
 | The program is small; its memory for lists and pictures is in a dynamic
-| area ("TubeSearch Heap").
+| area ("TubeSearch Heap"). The JavaScript helper (Solve) has its own.
 WimpSlot -min 2048K -max 2048K
 Run <TubeSearch$Dir>.!RunImage %*0

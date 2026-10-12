@@ -1,0 +1,8 @@
+| Solve: TubeSearch's JavaScript helper (tscli solve), started by
+| !TubeSearch as a task of its own when YouTube's TV app addresses need
+| their challenges answered (%0: the job file, %1: the answer file).
+| Its memory, up to about 110 MB the first time a new YouTube player is
+| met, is a dynamic area of its own ("TubeSearch Solver"), freed when it
+| ends. The program itself needs this much of the slot:
+WimpSlot -min 3072K -max 3072K
+Run <TubeSearch$Dir>.tscli -wimp solve %0 %1

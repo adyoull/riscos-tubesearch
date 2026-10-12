@@ -1,0 +1,8 @@
+{
+  "version": "0.8.0",
+  "files": {
+    "yt.solver.lib.min.js": "8420c259ad16e99ce004e4651ac1bcabb53b4457bf5668a97a9359be9a998a789fee8ab124ee17f91a2ea8fd84e0f2b2fc8eabcaf0b16a186ba734cf422ad053",
+    "yt.solver.core.min.js": "ee5b307d07f55e91e4723edf5ac205cc877a474187849d757dc1322e38427b157a9d706d510c1723d3670f98e5a3f8cbcde77874a80406bd7204bc9fea30f283"
+  },
+  "source": "yt-dlp 2026.10.10 (yt_dlp/extractor/youtube/jsc/_builtin/vendor/_info.py)"
+}

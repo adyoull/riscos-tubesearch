@@ -46,6 +46,23 @@ desktop.
   plain addresses: no JavaScript deciphering and no proof-of-origin
   token. TubeSearch picks H.264 (`avc1`) no taller than the chosen quality and
   the default AAC track (HLS for live streams).
+- **The TV fallback**: when YouTube won't serve that client, TubeSearch asks
+  as YouTube's TV app (TVHTML5, yt-dlp's default client), whose addresses
+  carry a scrambled signature and an "n" challenge. It fetches the player's
+  JavaScript (`/iframe_api` for its ID; its `signatureTimestamp` goes into
+  the request) and has yt-dlp's own solver scripts
+  ([yt-dlp/ejs](https://github.com/yt-dlp/ejs)) answer them in
+  [QuickJS](https://bellard.org/quickjs/), built into `tscli` without its
+  std and os modules. The desktop app runs that as a helper task
+  (`tscli -wimp solve`, its own memory, polling the Wimp) and keeps the
+  prepared player, so only the first video after a YouTube player update
+  is slow.
+- **Keeping the solver current**: `ejs.json` here names the solver version
+  yt-dlp pins, with its SHA3-512 hashes; a weekly GitHub Action
+  (`.github/workflows/update-ejs.yml`) updates it after checking the new
+  scripts answer known challenges for a recorded player. TubeSearch reads it
+  once a day, downloads that version from yt-dlp/ejs's releases, checks the
+  hashes, and goes back to its bundled copy if a new one fails.
 - **Playing**: TubeSearch writes a yt-dlp `-j` style JSON file (title, the two
   addresses, the User-Agent) to `<Wimp$ScrapDir>` and runs `*Reel` on it.
 - **Network**: `src/http.c` is a non-blocking HTTP/1.1 client (keep-alive,
@@ -75,22 +92,31 @@ make test RCD_DIR=path/to/riscos-crossdev     # all the Linux tests
 The tests use real YouTube answers recorded by NewPipe's test suite
 (`tests/fetch-fixtures.sh` fetches them; they aren't kept here):
 
-- `test_yt`: the JSON reader and the list/stream parsers on those answers;
+- `test_yt`: the JSON reader and the list/stream parsers on those answers
+  (and a TV-client answer made from them);
+- `test_jsolve`: yt-dlp's solver in QuickJS on a real recorded player
+  (854a788e): the same answers node gives;
+- `test_sha3`: SHA3-512 against Python's hashlib and yt-dlp's pinned hashes;
 - `test_http`: the HTTP client against a fake connection that delivers
   bytes in random small pieces (chunked, keep-alive, stale connections,
   cancelling, timeouts);
 - `test_ui`: the whole desktop front end against crossdev's fake RISC OS
   (a fake Wimp, SpriteExtend and network): search, pictures, play,
   related, channel, More, Back, menus, resizing, errors;
-- `e2e.sh`: `tscli` over real TLS against a local stand-in for YouTube;
+- `e2e.sh`: `tscli` over real TLS against a local stand-in for YouTube
+  and GitHub: lists, playing, the TV fallback with QuickJS, the cache,
+  updates through GitHub's redirect, a bad hash, broken scripts;
 - the portable code again as ARM code under QEMU with RISC OS's alignment
-  trap.
+  trap, including the whole solve (QuickJS and the solver).
 
 Tested by hand on a Raspberry Pi 4 (RISC OS 5, Reel 0.1.27+).
 
 ## Licence and support
 
-MIT (`COPYING`). Support is as-is, at the maintainer's own pace; report
+MIT (`COPYING`). Bundled: QuickJS (MIT, `third_party/quickjs`, with a
+two-line RISC OS patch in `PATCHES`) and yt-dlp's solver scripts
+(Unlicense, `ejs/`; they contain meriyah, ISC, and astring, MIT, with their
+licence texts). `!TubeSearch.Licences` has them all. Support is as-is, at the maintainer's own pace; report
 problems in GitHub Issues (say which release, and what `tscli` prints
 for the same search or video). Written with Claude as a coding assistant;
 Andrew Youll directs the work and tests on a Raspberry Pi 4.

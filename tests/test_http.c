@@ -163,9 +163,11 @@ static const http_transport fake = { f_open, f_ready, f_recv, f_send, f_close, f
 
 typedef struct { int called, status; char body[4096]; char err[160]; } result;
 
+static http_req *last_req;
 static void done (http_req *r, void *ctx)
 {
   result *res = ctx;
+  last_req = r;
   size_t len;
   const char *b = http_body (r, &len);
   res->called++;
@@ -260,10 +262,12 @@ int main (void)
         http_get ("img.example.com", "/2", NULL, 2, done, &d);
         http_cancel (rb);                                  /* still queued */
         http_poll ();
-        http_cancel (rc);                                  /* in progress */
+        int c_before = c.called;                           /* (one poll can finish it) */
+        if (!c_before)
+          http_cancel (rc);                                /* in progress */
         run ();
         CHECK (a.called == 1 && !strcmp (a.body, "api"));
-        CHECK (b.called == 0 && c.called == 0);
+        CHECK (b.called == 0 && c.called == c_before);
         CHECK (d.called == 1 && (!strcmp (d.body, "img2") || !strcmp (d.body, "img")));  /* (rc may go before it was sent) */
       }
       reset ();
@@ -275,6 +279,45 @@ int main (void)
       http_cancel_tag (7);
       run ();
       CHECK (a.called == 0 && b.called == 0 && !http_busy ());
+
+      /* redirects: to another host, then a relative one; the caller's
+         pointer stays the same request (cancelling it still works) */
+      reset ();
+      server ("github.com");
+      reply ("HTTP/1.1 302 Found\r\nLocation: https://objects.example.com/rel/file.js?sig=1\r\nContent-Length: 0\r\n\r\n", 0, 0);
+      reply ("HTTP/1.1 302 Found\r\nLocation: https://objects.example.com/rel/file.js?sig=2\r\nContent-Length: 0\r\n\r\n", 0, 0);
+      reply ("HTTP/1.1 301 Moved\r\nLocation: https://github.com/\r\nContent-Length: 0\r\n\r\n", 0, 0);
+      reply ("HTTP/1.1 303 See Other\r\nLocation: https://github.com/x\r\nContent-Length: 0\r\n\r\n", 0, 0);
+      server ("objects.example.com");
+      reply ("HTTP/1.1 307 Temporary\r\nLocation: /final\r\nContent-Length: 0\r\n\r\n", 0, 0);
+      reply ("HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nsolver", 0, 0);
+      reply ("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nnever", 0, 0);
+      memset (&a, 0, sizeof a); memset (&b, 0, sizeof b); memset (&c, 0, sizeof c);
+      {
+        http_req *ra = http_get ("github.com", "/yt-dlp/ejs/releases/download/0.8.0/file.js", "User-Agent: t\r\n", 1, done, &a);
+        run ();
+        CHECK (a.called == 1 && a.status == 200 && !strcmp (a.body, "solver"));
+        (void) ra;
+        /* the callback gets the very request the caller was given (so an
+           http_cancel of that pointer before then is safe) */
+        last_req = NULL;
+        ra = http_get ("github.com", "/b", NULL, 1, done, &b);
+        run ();
+        CHECK (b.called == 1 && !strcmp (b.body, "never") && last_req == ra);
+        /* a POST is not followed: the 301 itself comes back */
+        http_post ("github.com", "/p", NULL, "{}", 2, 1, done, &c);
+        run ();
+        CHECK (c.called == 1 && c.status == 301);
+      }
+      /* a redirect loop stops after 5 */
+      reset ();
+      server ("loop.example.com");
+      for (int k = 0; k < 7; k++)
+        reply ("HTTP/1.1 302 Found\r\nLocation: /again\r\nContent-Length: 0\r\n\r\n", 0, 0);
+      memset (&a, 0, sizeof a);
+      http_get ("loop.example.com", "/", NULL, 1, done, &a);
+      run ();
+      CHECK (a.called == 1 && a.status == 302);
 
       /* malformed answers, unknown hosts, timeouts */
       reset ();

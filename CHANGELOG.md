@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.2.0-rc2 (2026-10-12): the TV fallback, with QuickJS
+
+- When YouTube won't give the visionOS client playable addresses ("Sign in
+  to confirm you're not a bot"), TubeSearch asks again as YouTube's TV app
+  (yt-dlp's tv_samsung client) and answers its address challenges (the
+  signature and "n") with yt-dlp's own solver scripts (yt-dlp/ejs 0.8.0)
+  running in QuickJS 2026-06-04, built into tscli without its std/os
+  modules. Config: stream_client = auto | player | tv.
+- The solve runs in a helper task (tscli -wimp solve, through the Solve Obey
+  file) with its own memory (up to about 110 MB for a new YouTube player),
+  polling the Wimp so the desktop carries on. One at a time; choosing
+  another video stops it. The prepared player is kept in
+  <Wimp$ScrapDir>.TubeSearch.Players, so only the first video after a
+  YouTube player update is slow.
+- The solver scripts keep themselves up to date: once a day TubeSearch reads
+  ejs.json from its GitHub repository (kept at the version yt-dlp pins by a
+  weekly GitHub Action that also checks the new scripts against a recorded
+  player), downloads that version from yt-dlp/ejs's releases, and checks
+  its SHA3-512 hashes. Scripts that fail are marked bad and the bundled copy
+  is used, in the same play. Config: ejs_update, ejs_manifest_url.
+- The HTTP client follows redirects (GitHub's release downloads).
+- The thumbnail user agent is a Config setting (thumb_user_agent).
+- Videos YouTube calls unavailable don't try the TV app.
+- tscli: solve, update, -client, -ejs, -state, -work.
+
 ## 0.2.0-rc1 (2026-10-12): first release candidate
 
 - Renamed from Tube to TubeSearch (!TubeSearch, riscos-tubesearch; the

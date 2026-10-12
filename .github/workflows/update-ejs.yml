@@ -1,0 +1,41 @@
+# Keeps ejs.json at the solver version the newest yt-dlp release pins.
+# TubeSearch reads ejs.json once a day and downloads that version from
+# yt-dlp/ejs's releases (checked against these hashes), so a merge here
+# updates every copy of TubeSearch without a new release of it.
+# The new version is only written after its files match yt-dlp's hashes and
+# answer known challenges for a recorded YouTube player (node 22).
+name: Update the solver manifest
+
+on:
+  schedule:
+    - cron: '17 5 * * 1'      # Mondays
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: The newest yt-dlp
+        run: |
+          python3 -m venv /tmp/venv
+          /tmp/venv/bin/pip install -q -U yt-dlp
+      - name: A recorded YouTube player (from NewPipe's tests)
+        run: sh tests/fetch-fixtures.sh
+      - name: Check and update ejs.json
+        id: update
+        run: /tmp/venv/bin/python tools/update-ejs-manifest.py --manifest ejs.json --player tests/fixtures/player_854a788e.js
+      - name: Commit
+        if: steps.update.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ejs.json
+          git commit -m "ejs.json: solver scripts ${{ steps.update.outputs.version }}, as yt-dlp uses"
+          git push

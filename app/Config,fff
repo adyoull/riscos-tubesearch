@@ -20,6 +20,28 @@ max_quality = 1080
 # player_device_model = RealityDevice17,1
 # player_os_version = 26.6.0.23O770
 
+# Where the streams come from:
+#   auto    the player client above; if YouTube won't give it playable
+#           addresses, YouTube's TV app (whose addresses need YouTube's
+#           JavaScript: answered by QuickJS running yt-dlp's solver)
+#   player  the player client only
+#   tv      the TV app only
+# stream_client = auto
+
+# The TV app (yt-dlp's tv_samsung client, October 2026):
+# tv_client_version = 5.20260707
+# tv_user_agent = Mozilla/5.0 (SMART-TV; Linux; Tizen 2.4.0) AppleWebKit/538.1 (KHTML, like Gecko) Version/2.4.0 TV Safari/538.1
+# tv_device_model = UKS9800
+
+# yt-dlp's solver scripts: TubeSearch checks this manifest once a day and
+# takes the version it names (checked against its SHA3-512 hashes) from
+# yt-dlp/ejs's releases. never: only the copy in TubeSearch is used.
+# ejs_update = daily
+# ejs_manifest_url = https://raw.githubusercontent.com/adyoull/riscos-tubesearch/main/ejs.json
+
+# What the thumbnail server is told:
+# thumb_user_agent = Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36
+
 # What Reel tells the video servers it is:
 # media_user_agent = Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15
 

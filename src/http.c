@@ -25,6 +25,8 @@ struct http_req {
   void *ctx;
   int cancelled;
   int retried;
+  int is_get, redirects;
+  char *headers;              /* the extra header lines, kept for a redirect */
 
   char *out;                  /* the request, as sent */
   size_t outlen, sent;
@@ -76,6 +78,7 @@ static unsigned now (void)
 
 static void free_req (http_req *r)
 {
+  free (r->headers);
   free (r->out);
   free (r->head);
   free (r->body);
@@ -110,12 +113,56 @@ static lane *lane_for (const char *host)
   return free_lane;
 }
 
+/* The request text in r->out. 0, or -1 out of memory. */
+static int build_out (http_req *r, const char *method, const char *path, const char *headers,
+                      const char *body, size_t bodylen)
+{
+  size_t hl = headers ? strlen (headers) : 0;
+  size_t cap = strlen (method) + strlen (path) + strlen (r->host) + hl + bodylen + 128;
+  char *o = malloc (cap);
+  size_t at;
+  if (!o)
+    return -1;
+  at = (size_t) snprintf (o, cap, "%s %s HTTP/1.1\r\nHost: %s\r\nConnection: keep-alive\r\n", method, path, r->host);
+  if (hl)
+    {
+      memcpy (o + at, headers, hl);
+      at += hl;
+    }
+  if (body)
+    at += (size_t) snprintf (o + at, cap - at, "Content-Length: %lu\r\n", (unsigned long) bodylen);
+  memcpy (o + at, "\r\n", 2);
+  at += 2;
+  if (body && bodylen)
+    {
+      memcpy (o + at, body, bodylen);
+      at += bodylen;
+    }
+  free (r->out);
+  r->out = o;
+  r->outlen = at;
+  r->sent = 0;
+  return 0;
+}
+
+/* Puts r at the end of its host's queue. 0, or -1 (no lane free). */
+static int enqueue (http_req *r)
+{
+  lane *l = lane_for (r->host);
+  http_req **q;
+  if (!l)
+    return -1;
+  r->next = NULL;
+  for (q = &l->queue; *q; q = &(*q)->next)
+    ;
+  *q = r;
+  return 0;
+}
+
 static http_req *make (const char *method, const char *host, const char *path, const char *headers,
                        const char *body, size_t bodylen, int tag, http_done_fn done, void *ctx)
 {
   http_req *r;
-  lane *l;
-  size_t hl;
   if (!T || strlen (host) >= sizeof r->host)
     return NULL;
   if (!(r = calloc (1, sizeof *r)))
@@ -124,45 +171,13 @@ static http_req *make (const char *method, const char *host, const char *path, c
   r->tag = tag;
   r->done = done;
   r->ctx = ctx;
-  hl = headers ? strlen (headers) : 0;
-  {
-    size_t plen = strlen (path), cap = strlen (method) + plen + strlen (host) + hl + bodylen + 128;
-    char *o = malloc (cap);
-    size_t at;
-    if (!o)
-      {
-        free (r);
-        return NULL;
-      }
-    at = (size_t) snprintf (o, cap, "%s %s HTTP/1.1\r\nHost: %s\r\nConnection: keep-alive\r\n", method, path, host);
-    if (hl)
-      {
-        memcpy (o + at, headers, hl);
-        at += hl;
-      }
-    if (body)
-      at += (size_t) snprintf (o + at, cap - at, "Content-Length: %lu\r\n", (unsigned long) bodylen);
-    memcpy (o + at, "\r\n", 2);
-    at += 2;
-    if (body && bodylen)
-      {
-        memcpy (o + at, body, bodylen);
-        at += bodylen;
-      }
-    r->out = o;
-    r->outlen = at;
-  }
-  if (!(l = lane_for (host)))
+  r->is_get = !strcmp (method, "GET");
+  if ((headers && !(r->headers = strdup (headers)))
+      || build_out (r, method, path, headers, body, bodylen) || enqueue (r))
     {
       free_req (r);
       return NULL;
     }
-  {
-    http_req **q = &l->queue;
-    while (*q)
-      q = &(*q)->next;
-    *q = r;
-  }
   return r;
 }
 
@@ -251,6 +266,68 @@ static void close_lane (lane *l)
   l->uses = 0;
 }
 
+static const char *header_value (const char *head, const char *name);
+
+/* A GET answered 301/302/303/307/308 with a Location: sent again there, as
+   the same http_req (so a caller's pointer stays good). 1 if it was. */
+static int redirect (http_req *r)
+{
+  char host[96], path[2048];
+  const char *loc, *p;
+  size_t n;
+  if (!r->is_get || !r->head || r->redirects >= 5
+      || !(r->status == 301 || r->status == 302 || r->status == 303 || r->status == 307 || r->status == 308)
+      || !(loc = header_value (r->head, "Location")))
+    return 0;
+  n = strcspn (loc, "\r\n");
+  if (!strncmp (loc, "https://", 8) || !strncmp (loc, "//", 2))
+    {
+      p = loc + (loc[0] == '/' ? 2 : 8);
+      size_t hl = strcspn (p, "/\r\n");
+      if (!hl || hl >= sizeof host)
+        return 0;
+      memcpy (host, p, hl);
+      host[hl] = 0;
+      p += hl;
+      n -= (size_t) (p - loc);
+    }
+  else if (loc[0] == '/')
+    {
+      snprintf (host, sizeof host, "%s", r->host);
+      p = loc;
+    }
+  else
+    return 0;                                  /* (http://, or relative: not followed) */
+  if (n == 0)
+    {
+      p = "/";
+      n = 1;
+    }
+  if (n >= sizeof path)
+    return 0;
+  memcpy (path, p, n);
+  path[n] = 0;
+  if (strchr (host, ':'))
+    return 0;                                  /* (another port: not followed) */
+  snprintf (r->host, sizeof r->host, "%s", host);
+  free (r->head);
+  free (r->body);
+  r->head = r->body = NULL;
+  r->headlen = r->headcap = r->bodylen = r->bodycap = 0;
+  r->head_done = r->status = r->conn_close = r->got_bytes = r->retried = 0;
+  r->body_mode = 0;
+  r->remaining = 0;
+  r->linelen = 0;
+  r->err[0] = 0;
+  r->redirects++;
+  if (build_out (r, "GET", path, r->headers, NULL, 0) || enqueue (r))
+    {
+      snprintf (r->err, sizeof r->err, "out of memory");
+      return 0;
+    }
+  return 1;
+}
+
 /* The current request is over (r->status set, or r->err): call back. */
 static void finish (lane *l, int keep)
 {
@@ -263,6 +340,8 @@ static void finish (lane *l, int keep)
     }
   else
     close_lane (l);
+  if (!r->cancelled && redirect (r))
+    return;                                    /* (the same request, on its way to the new address) */
   if (!r->cancelled && r->done)
     r->done (r, r->ctx);
   free_req (r);

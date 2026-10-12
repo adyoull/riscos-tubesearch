@@ -288,8 +288,9 @@ static void test_player (void)
       printf ("  %s\n", err);
   }
   {
+    /* a ciphered format with no address in its cipher: not taken */
     const char *sig = "{\"playabilityStatus\":{\"status\":\"OK\"},\"streamingData\":{\"adaptiveFormats\":[{\"itag\":137,\"mimeType\":\"video/mp4; codecs=\\\"avc1\\\"\",\"signatureCipher\":\"s=x\"}]}}";
-    CHECK (yt_parse_player (sig, strlen (sig), 720, &p, err, sizeof err) == -1 && strstr (err, "scrambled"));
+    CHECK (yt_parse_player (sig, strlen (sig), 720, &p, err, sizeof err) == -1 && strstr (err, "no H.264"));
   }
   {
     const char *live = "{\"playabilityStatus\":{\"status\":\"OK\"},\"videoDetails\":{\"isLive\":true,\"title\":\"L\"},\"streamingData\":{\"hlsManifestUrl\":\"https://x/hls.m3u8\",\"adaptiveFormats\":[{\"itag\":137,\"mimeType\":\"video/mp4; codecs=\\\"avc1\\\"\",\"url\":\"https://v\"}]}}";
@@ -301,6 +302,70 @@ static void test_player (void)
   }
 }
 
+/* The TV client: ciphered signatures and n values, answered and put back. */
+static void test_tv (void)
+{
+  size_t len;
+  char err[200], *t;
+  yt_play p;
+  const char *n[2], *sig[2];
+  int nn, nsig;
+  static const char *const n_out_v[] = { "RL7twTMlYAhbWlqMF", "OtjoLvmzT_c2ob_ei" };
+  static const char sig_out[] =
+    "zzwg=wgwCHlydB9Hg7PMegXoVzaoAXXB8woPSNZqRUC3Pe7vAEiApVSCMlh5mt5OX-NMB=tRPyyzdAM9MPM-kPfjgTxEK0IAhIgRwE0jiEJA";
+
+  /* the player's ID and signature timestamp */
+  if ((t = load ("iframe_api.js", &len)))
+    {
+      char id[16], path[128];
+      CHECK (yt_player_id (t, len, id) == 0 && !strcmp (id, "854a788e"));
+      yt_player_path (id, path, sizeof path);
+      CHECK (!strcmp (path, "/s/player/854a788e/player_ias.vflset/en_US/base.js"));
+      free (t);
+    }
+  CHECK (yt_player_id ("nothing here", 12, (char[16]) { 0 }) == -1);
+  if ((t = load ("player_854a788e.js", &len)))
+    {
+      CHECK (yt_player_sts (t, len) == 20668);
+      free (t);
+    }
+  CHECK (yt_player_sts ("var a={sts:19123}", 17) == 19123);
+  CHECK (yt_player_sts ("hosts:12345", 11) == 0);
+
+  /* the TV request */
+  {
+    yt_req *r = yt_req_player_tv ("7PIMiDcwNvc", 20668);
+    CHECK (r && !strcmp (r->host, "www.youtube.com") && strstr (r->path, "/youtubei/v1/player"));
+    CHECK (r && strstr (r->body, "\"clientName\":\"TVHTML5\"") && strstr (r->body, "\"signatureTimestamp\":20668"));
+    CHECK (r && strstr (r->headers, "X-YouTube-Client-Name: 7\r\n") && strstr (r->headers, "SMART-TV"));
+    yt_req_free (r);
+  }
+
+  if (!(t = load ("player_tv.json", &len)))
+    return;
+  CHECK (yt_parse_player (t, len, 720, &p, err, sizeof err) == 0);
+  CHECK (yt_play_needs_solving (&p));
+  CHECK (p.quality == 720 && strstr (p.video_url, "itag=136") && strstr (p.audio_url, "itag=140"));
+  CHECK (p.video_sp && !strcmp (p.video_sp, "sig") && p.video_s && !strncmp (p.video_s, "NJAJEij0Ew", 10));
+  CHECK (p.video_n && !strcmp (p.video_n, "IlLiA21ny7gqA2m4p37") && p.audio_n && !strcmp (p.audio_n, "eabGFpsUKuWHXGh6FR4"));
+  yt_play_challenges (&p, n, &nn, sig, &nsig);
+  CHECK (nn == 2 && nsig == 1);                   /* (the same signature on both) */
+  CHECK (yt_play_apply (&p, n_out_v, (const char *const[]) { sig_out }) == 0);
+  CHECK (!yt_play_needs_solving (&p));
+  CHECK (strstr (p.video_url, "&n=RL7twTMlYAhbWlqMF&") || strstr (p.video_url, "&n=RL7twTMlYAhbWlqMF"));
+  CHECK (strstr (p.audio_url, "n=OtjoLvmzT_c2ob_ei"));
+  CHECK (!strstr (p.video_url, "IlLiA21ny7gqA2m4p37"));
+  {
+    /* the signature, URL-encoded, as the last parameter */
+    const char *e = strstr (p.video_url, "&sig=zzwg%3Dwgw");
+    CHECK (e && !strchr (e + 1, '&') && strstr (e, "jiEJA"));
+  }
+  if (verbose)
+    printf ("  tv video: ...%s\n", p.video_url + strlen (p.video_url) - 160);
+  yt_play_free (&p);
+  free (t);
+}
+
 int main (int argc, char **argv)
 {
   dir = argc > 1 ? argv[1] : "tests/fixtures";
@@ -310,6 +375,7 @@ int main (int argc, char **argv)
   test_requests ();
   test_lists ();
   test_player ();
+  test_tv ();
   printf (failures ? "test_yt: %d FAILED\n" : "test_yt: all passed\n", failures);
   return failures != 0;
 }

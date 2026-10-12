@@ -20,6 +20,7 @@
 #include "text.h"
 #include "thumbs.h"
 #include "transport.h"
+#include "ejsupd.h"
 #include "yt.h"
 
 #define APP_NAME "TubeSearch"
@@ -79,6 +80,7 @@ static int wrap_gen = 1;
 static page *pages[MAX_PAGES];
 static int depth;
 static api_op *play_op;
+static int play_answered;                    /* play_done has been called for the newest play */
 static char play_id[40];
 static int play_file_n;
 static int quality = 1080;
@@ -757,28 +759,185 @@ static void search (void)
 /* Wimp_StartTask, with UnixLib's VFP context switched off around it (as
    riscos-ffmpeg's ffplay does): otherwise VFPSupport may later save it
    lazily into the new task's memory, which is at the same address. */
-static _kernel_oserror *start_task (const char *cmd)
+static _kernel_oserror *start_task (const char *cmd, int *handle)
 {
 #ifdef __arm__
   _kernel_oserror *err;
+  int h = 0;
   __asm__ volatile (
     "mov    r0, #0\n\t"
     "mov    r1, #0\n\t"
     "swi    0x78EC3\n\t"          /* XVFPSupport_ChangeContext 0: off */
     "movvs  r0, #0\n\t"
     "mov    r4, r0\n\t"           /* the old context */
-    "mov    r0, %1\n\t"
+    "mov    r0, %2\n\t"
     "swi    0x600DE\n\t"          /* XWimp_StartTask */
     "movvs  %0, r0\n\t"
     "movvc  %0, #0\n\t"
+    "movvc  %1, r0\n\t"           /* the new task's handle (0: it has finished) */
     "movs   r0, r4\n\t"
     "mov    r1, #0\n\t"
     "swine  0x78EC3\n\t"          /* back on */
-    : "=&r" (err) : "r" (cmd) : "r0", "r1", "r2", "r3", "r4", "r14", "cc", "memory");
+    : "=&r" (err), "=&r" (h) : "r" (cmd) : "r0", "r1", "r2", "r3", "r4", "r14", "cc", "memory");
+  if (handle)
+    *handle = h;
   return err;
 #else   /* the tests on Linux (fake RISC OS) */
-  return _swix (Wimp_StartTask, _IN (0), cmd);
+  int h = 0;
+  _kernel_oserror *e = _swix (Wimp_StartTask, _IN (0) | _OUT (0), cmd, &h);
+  if (handle)
+    *handle = h;
+  return e;
 #endif
+}
+
+/* ---- the JavaScript helper (the TV fallback's challenges) ------------------
+
+   The solve runs in tscli, started as a task of its own (the Solve Obey
+   file sets its WimpSlot): its memory (about 110 MB the first time for a
+   new YouTube player) is its own and freed when it ends, and it polls the
+   Wimp while it works. One at a time; it ends when the answer is written. */
+
+#define Message_TaskCloseDown 0x400C3
+
+static char ts_work[400], ts_cache[440], ejs_bundled[400], ejs_state[400];
+
+static struct {
+  int running;                /* the task is there (until Message_TaskCloseDown) */
+  int task;
+  int answered;               /* done has been called for this job */
+  void (*done) (void *);
+  void *ctx;
+  char out[400];
+} helper;
+
+static struct { int set; char job[400], out[400]; void (*done) (void *); void *ctx; } pending;
+
+static int file_exists (const char *path)
+{
+  int type = 0;
+  if (_swix (OS_File, _INR (0, 1) | _OUT (0), 17, path, &type))
+    return 0;
+  return type == 1;
+}
+
+static void helper_answer (void)
+{
+  void (*done) (void *) = helper.done;
+  if (helper.answered)
+    return;
+  helper.answered = 1;
+  helper.done = NULL;
+  if (done)
+    done (helper.ctx);
+}
+
+static int helper_start (const char *job, const char *out, void (*done) (void *), void *ctx)
+{
+  char cmd[1000];
+  const char *dir = getenv ("TubeSearch$Dir");
+  int handle = 0;
+  if (!dir)
+    return -1;
+  snprintf (cmd, sizeof cmd, "/%s.Solve %s %s", dir, job, out);
+  memset (&helper, 0, sizeof helper);
+  helper.done = done;
+  helper.ctx = ctx;
+  snprintf (helper.out, sizeof helper.out, "%s", out);
+  if (start_task (cmd, &handle))
+    return -1;
+  helper.task = handle;
+  helper.running = handle != 0;
+  if (!helper.running)
+    helper_answer ();                       /* (it has finished already) */
+  return 0;
+}
+
+static void helper_closed (void)
+{
+  helper.running = 0;
+  helper_answer ();                         /* (without an answer file: solve_done says so) */
+  if (pending.set)
+    {
+      pending.set = 0;
+      if (helper_start (pending.job, pending.out, pending.done, pending.ctx))
+        pending.done (pending.ctx);
+    }
+}
+
+static int tv_solve (const char *job, const char *out, void (*done) (void *), void *ctx)
+{
+  if (helper.running)
+    {
+      /* one helper at a time (each may need 110 MB): this one next */
+      pending.set = 1;
+      snprintf (pending.job, sizeof pending.job, "%s", job);
+      snprintf (pending.out, sizeof pending.out, "%s", out);
+      pending.done = done;
+      pending.ctx = ctx;
+      return 0;
+    }
+  return helper_start (job, out, done, ctx);
+}
+
+static void tv_solve_cancel (void *ctx)
+{
+  if (pending.set && pending.ctx == ctx)
+    pending.set = 0;
+  if (helper.ctx == ctx && !helper.answered)
+    {
+      int msg[5] = { 20, 0, 0, 0, Message_Quit };
+      helper.answered = 1;                  /* (its answer isn't wanted) */
+      helper.done = NULL;
+      if (helper.running)
+        _swix (Wimp_SendMessage, _INR (0, 2), 17, msg, helper.task);
+    }
+}
+
+static void tv_progress (const char *what, void *ctx)
+{
+  (void) ctx;
+  set_status ("%s", what);
+}
+
+static const api_tv_host tv_host = {
+  ts_work, ts_cache, ejsupd_scripts, tv_solve, tv_solve_cancel, ejsupd_failed, tv_progress
+};
+
+/* Null events while the helper works: its answer may be there. */
+static void helper_poll (void)
+{
+  if (helper.running && !helper.answered && file_exists (helper.out))
+    helper_answer ();
+}
+
+static void make_dir (const char *path)
+{
+  _swix (OS_File, _INR (0, 1) | _IN (4), 8, path, 0);
+}
+
+static void tv_init (void)
+{
+  const char *scrap = getenv ("Wimp$ScrapDir"), *dir = getenv ("TubeSearch$Dir"),
+    *choices = getenv ("Choices$Write");
+  if (!scrap || !dir)
+    return;                                 /* (no TV fallback) */
+  snprintf (ts_work, sizeof ts_work, "%s.TubeSearch", scrap);
+  snprintf (ts_cache, sizeof ts_cache, "%s.Players", ts_work);
+  make_dir (ts_work);
+  make_dir (ts_cache);
+  snprintf (ejs_bundled, sizeof ejs_bundled, "%s.Resources.ejs", dir);
+  if (choices)
+    {
+      char p[400];
+      snprintf (p, sizeof p, "%s.TubeSearch", choices);
+      make_dir (p);
+      snprintf (ejs_state, sizeof ejs_state, "%s.TubeSearch.ejs", choices);
+      make_dir (ejs_state);
+    }
+  ejsupd_init (ejs_bundled, ejs_state[0] ? ejs_state : NULL);
+  api_set_tv_host (&tv_host);
+  ejsupd_check (0, NULL, NULL);             /* (once a day) */
 }
 
 static void play_done (yt_play *pl, const char *err, void *ctx)
@@ -788,6 +947,7 @@ static void play_done (yt_play *pl, const char *err, void *ctx)
   char *json;
   (void) ctx;
   play_op = NULL;
+  play_answered = 1;
   if (!pl)
     {
       set_status ("%s", err);
@@ -818,7 +978,7 @@ static void play_done (yt_play *pl, const char *err, void *ctx)
       set_status ("Reel isn't known yet");
       return;
     }
-  if (fail (start_task (cmd)))
+  if (fail (start_task (cmd, NULL)))
     return;
   set_status ("Playing %dp%s in Reel", pl->quality, pl->hls_url ? " (live)" : "");
 }
@@ -827,10 +987,16 @@ static void play (const yt_item *it)
 {
   if (it->kind != YT_VIDEO)
     return;
+  api_op *op;
   api_cancel (play_op);
+  play_op = NULL;
   snprintf (play_id, sizeof play_id, "%s", it->id);
-  play_op = api_play (it->id, quality, play_done, NULL);
-  set_status (play_op ? "Finding the video's streams..." : "Out of memory");
+  set_status ("Finding the video's streams...");
+  play_answered = 0;
+  op = api_play (it->id, quality, play_done, NULL);
+  if (!op && !play_answered)
+    set_status ("Out of memory");
+  play_op = op;
 }
 
 /* ---- menus -------------------------------------------------------------- */
@@ -1090,7 +1256,7 @@ static int create_iconbar_icon (void)
 
 int ui_init (void)
 {
-  static const int messages[] = { Message_ModeChange, Message_FontChanged, 0 };
+  static const int messages[] = { Message_ModeChange, Message_FontChanged, Message_TaskCloseDown, 0 };
   char err[200];
   int alphabet = 0;
   const char *dir = getenv ("TubeSearch$Dir");
@@ -1124,12 +1290,13 @@ int ui_init (void)
   read_screen ();
   http_init (&transport_system);
   thumbs_init (picture_arrived);
+  tv_init ();
   return create_iconbar_icon () || create_main () || create_bar () || create_info ();
 }
 
 int ui_busy (void)
 {
-  return http_busy ();
+  return http_busy () || helper.running;
 }
 
 int ui_event (int reason, int *b)
@@ -1138,6 +1305,7 @@ int ui_event (int reason, int *b)
     {
     case Null_Reason:
       http_poll ();
+      helper_poll ();
       break;
     case Redraw_Window_Request:
       if (b[0] == win)
@@ -1183,6 +1351,8 @@ int ui_event (int reason, int *b)
     case User_Message_Recorded:
       if (b[4] == Message_Quit)
         return 1;
+      if (b[4] == Message_TaskCloseDown && helper.running && b[1] == helper.task)
+        helper_closed ();
       if (b[4] == Message_ModeChange || b[4] == Message_FontChanged)
         {
           read_screen ();

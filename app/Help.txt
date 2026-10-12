@@ -44,6 +44,30 @@ Reel is given a small file in <Wimp$ScrapDir> (TubeSearchPlay1 to 4) in the
 same form as yt-dlp's -j output: the title, the two addresses and the
 headers. Reel's own Media info window shows what's playing.
 
+When YouTube won't give TubeSearch playable addresses
+-----------------------------------------------------
+TubeSearch first asks as YouTube's visionOS app, whose addresses play as
+they are. When YouTube won't serve that app ("Sign in to confirm you're
+not a bot", say), TubeSearch asks again as YouTube's TV app. Its
+addresses carry challenges that only YouTube's own JavaScript answers, so
+TubeSearch fetches YouTube's player and has yt-dlp's solver answer them in
+QuickJS, a JavaScript engine built into tscli.
+
+That runs as a task of its own ("TubeSearch solver" in the Task manager),
+so the desktop carries on meanwhile. The first video after YouTube updates
+its player (every week or two) takes a while: on a Raspberry Pi 4 perhaps
+half a minute, and up to about 110 MB of memory, freed afterwards. The
+prepared player is kept (in <Wimp$ScrapDir>.TubeSearch.Players), so the
+videos after it take a second or two. The status line says what's
+happening; choosing another video stops it.
+
+The solver scripts keep themselves up to date: once a day TubeSearch
+reads a small file in its GitHub repository saying which version yt-dlp
+currently uses, and downloads that version from yt-dlp's own releases,
+checking it against the hashes in that file. If a new version doesn't
+work, TubeSearch goes back to its own copy. ejs_update = never in Config
+turns this off.
+
 When it stops working
 ---------------------
 YouTube changes what it expects from its apps every few months. TubeSearch
@@ -59,17 +83,20 @@ asked for them, and for a few hours.
 tscli
 -------
 !TubeSearch.tscli is the same YouTube code for a TaskWindow, to try things
-and find faults:
+and find faults (and the JavaScript helper):
   tscli search <words>          the results, as text
   tscli related <video ID>
   tscli channel <UC... ID>
   tscli play <video ID> [lines] [file]   writes Reel's file
   tscli -dump <directory> ...   keeps YouTube's raw answers
   tscli -config <file> ...      reads settings as Config does
+  tscli -client tv play <ID>    the TV app (and the solver) only
+  tscli update                  checks for newer solver scripts now
 
 Licence
 -------
-MIT (see COPYING). Source and releases:
+MIT (see COPYING; Licences has the parts by others: QuickJS, yt-dlp's
+solver scripts). Source and releases:
 https://github.com/adyoull/riscos-tubesearch (problems: GitHub Issues).
 Written with Claude as a coding assistant; Andrew Youll directs the
 work and tests on a Raspberry Pi 4.

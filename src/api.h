@@ -1,7 +1,7 @@
 /* api.h - YouTube operations that finish later: fetch a list (search,
    related videos, a channel's videos, or more of any of them) or the
    streams of a video. The first one also gets a visitor ID from YouTube,
-   which the others then carry. Driven by http_poll(). Part of Tube. MIT. */
+   which the others then carry. Driven by http_poll(). Part of TubeSearch. MIT. */
 #ifndef TUBE_API_H
 #define TUBE_API_H
 #include "yt.h"

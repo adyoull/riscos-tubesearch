@@ -2,7 +2,7 @@
    non-blocking sockets and OpenSSL. Used by the command-line tool on a
    PC and by the tests (TUBE_CONNECT=host:port sends every connection to a
    local test server; TUBE_INSECURE=1 accepts its certificate).
-   Part of Tube. MIT licence. */
+   Part of TubeSearch. MIT licence. */
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>

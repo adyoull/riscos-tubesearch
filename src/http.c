@@ -1,4 +1,4 @@
-/* http.c - see http.h. Part of Tube. MIT licence. */
+/* http.c - see http.h. Part of TubeSearch. MIT licence. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

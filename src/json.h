@@ -4,7 +4,7 @@
    go). Strings are unescaped into UTF-8. Lookups are linear, which is
    fine for responses of a megabyte or two.
 
-   Part of Tube. MIT licence (see COPYING). */
+   Part of TubeSearch. MIT licence (see COPYING). */
 #ifndef TUBE_JSON_H
 #define TUBE_JSON_H
 #include <stddef.h>

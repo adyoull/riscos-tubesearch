@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Draws Tube's icons (an old telly with a play button) as PNGs:
-     tools/mkicons.py OUTDIR    -> OUTDIR/tube.png (34x34), sm-tube.png (17x17)
+"""Draws TubeSearch's icons (an old telly with a play button) as PNGs:
+     tools/mkicons.py OUTDIR    -> OUTDIR/tubesearch.png (34x34), sm-tubesearch.png (17x17)
 Drawn 8 times bigger and scaled down, so the edges are smooth before
-png2sprite turns alpha into a 1-bit mask. Part of Tube. MIT licence."""
+png2sprite turns alpha into a 1-bit mask. Part of TubeSearch. MIT licence."""
 import sys
 from PIL import Image, ImageDraw
 
@@ -30,5 +30,5 @@ def telly(size):
 
 
 out = sys.argv[1]
-telly(34).save(out + '/tube.png')
-telly(17).save(out + '/sm-tube.png')
+telly(34).save(out + '/tubesearch.png')
+telly(17).save(out + '/sm-tubesearch.png')

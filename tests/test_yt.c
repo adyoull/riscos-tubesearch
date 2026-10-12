@@ -1,7 +1,7 @@
 /* Tests json.c, text.c and yt.c against real YouTube answers
    (tests/fetch-fixtures.sh) and some made-up JSON.
      test_yt FIXTURE_DIR [-v]
-   Part of Tube. MIT licence. */
+   Part of TubeSearch. MIT licence. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

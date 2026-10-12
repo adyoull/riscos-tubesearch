@@ -1,5 +1,5 @@
 #!/bin/sh
-# End to end on Linux: tubecli (built with OpenSSL) against a local HTTPS
+# End to end on Linux: tscli (built with OpenSSL) against a local HTTPS
 # stand-in for YouTube (fake_youtube.py) answering with the recorded
 # fixtures. Checks the lists, the chosen streams and every request.
 #   tests/e2e.sh TUBECLI
@@ -48,6 +48,6 @@ assert eps.count('visitor_id')==4, eps
 assert eps.count('player')==1 and eps.count('search')==2 and eps.count('browse')==2 and eps.count('next')==1, eps
 \""
 "$CLI" play badvideoid 720 > /dev/null 2> "$W/err" && fail=1
-check "an unplayable answer is reported" "grep -q 'tubecli:' '$W/err'"
+check "an unplayable answer is reported" "grep -q 'tscli:' '$W/err'"
 [ $fail = 0 ] && echo "e2e: all passed" || echo "e2e: FAILED"
 exit $fail

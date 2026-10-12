@@ -8,7 +8,7 @@ data once it has been handed out), and logs every request as a line of
 JSON to the log file.
 
   fake_youtube.py PORT CERT KEY FIXTURE_DIR LOG
-Part of Tube. MIT licence."""
+Part of TubeSearch. MIT licence."""
 import json, ssl, sys, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 

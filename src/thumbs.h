@@ -1,7 +1,7 @@
 /* thumbs.h - the pictures beside the videos: fetched (http.h), turned
    from JPEG into 32bpp sprites by SpriteExtend, kept for a while (the
    least recently shown are dropped first) and plotted.
-   Part of Tube. MIT licence. */
+   Part of TubeSearch. MIT licence. */
 #ifndef TUBE_THUMBS_H
 #define TUBE_THUMBS_H
 

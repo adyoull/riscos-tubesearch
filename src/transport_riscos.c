@@ -12,7 +12,7 @@
      about a certificate it can't verify), so it is driven with 1-byte
      MSG_PEEK reads from null events, and the desktop keeps running.
 
-   Part of Tube. MIT licence. */
+   Part of TubeSearch. MIT licence. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -275,7 +275,7 @@ int transport_check (char *err, size_t errlen)
   _kernel_swi_regs r;
   if (_kernel_swi (XAcornSSL_Version, &r, &r))
     {
-      snprintf (err, errlen, "Tube needs the AcornSSL module (RISC OS 5.28 or later): "
+      snprintf (err, errlen, "TubeSearch needs the AcornSSL module (RISC OS 5.28 or later): "
                 "RMLoad System:Modules.Network.URL.AcornSSL");
       return -1;
     }

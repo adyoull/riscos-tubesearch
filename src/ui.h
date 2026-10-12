@@ -1,10 +1,10 @@
-/* ui.h - Tube's desktop front end: an icon bar icon, a window with a
+/* ui.h - TubeSearch's desktop front end: an icon bar icon, a window with a
    toolbar (Back, the search box, Search, and a status line) over a grid
    of videos with their pictures. Select plays a video in Reel; Adjust
    shows the videos related to it; clicking a channel's name opens its
    videos; Menu has all of these.
 
-   main.c only polls; everything else is here. Part of Tube. MIT. */
+   main.c only polls; everything else is here. Part of TubeSearch. MIT. */
 #ifndef TUBE_UI_H
 #define TUBE_UI_H
 

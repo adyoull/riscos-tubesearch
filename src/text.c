@@ -1,4 +1,4 @@
-/* text.c - see text.h. Part of Tube. MIT licence. */
+/* text.c - see text.h. Part of TubeSearch. MIT licence. */
 #include <stdlib.h>
 #include <string.h>
 #include "text.h"

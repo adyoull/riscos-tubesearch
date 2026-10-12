@@ -1,10 +1,10 @@
-# Tube's settings. A copy in Choices:Tube.Config (made by you) is read after
-# this one, so settings there win and survive updating !Tube.
+# TubeSearch's settings. A copy in Choices:TubeSearch.Config (made by you) is read after
+# this one, so settings there win and survive updating !TubeSearch.
 #
 # YouTube changes what its apps send from time to time. If videos stop
 # playing ("Sign in to confirm you're not a bot", or no streams), newer
 # values from yt-dlp (yt_dlp/extractor/youtube/_base.py, the VISIONOS
-# client) or NewPipe can be put here without a new Tube.
+# client) or NewPipe can be put here without a new TubeSearch.
 #
 # The tallest video to ask for (lines): 360, 480, 720 or 1080.
 max_quality = 1080

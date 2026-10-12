@@ -1,4 +1,4 @@
-/* api.c - see api.h. Part of Tube. MIT licence. */
+/* api.c - see api.h. Part of TubeSearch. MIT licence. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

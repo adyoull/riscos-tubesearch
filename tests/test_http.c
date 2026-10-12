@@ -1,7 +1,7 @@
 /* Tests http.c against a fake transport: responses arriving in small
    random pieces, chunked bodies, keep-alive, a server that closed an idle
    connection, Connection: close, cancelling, malformed answers and time-
-   outs. Part of Tube. MIT licence. */
+   outs. Part of TubeSearch. MIT licence. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

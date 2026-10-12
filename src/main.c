@@ -1,5 +1,5 @@
-/* Tube: browse YouTube on RISC OS and play videos in Reel. main.c only
-   polls; ui.c does the rest. Part of Tube. MIT licence. */
+/* TubeSearch: browse YouTube on RISC OS and play videos in Reel. main.c only
+   polls; ui.c does the rest. Part of TubeSearch. MIT licence. */
 #include <kernel.h>
 #include <swis.h>
 #include <unixlib/local.h>
@@ -10,7 +10,7 @@
 int __riscosify_control = __RISCOSIFY_NO_PROCESS;
 
 /* The heap in a dynamic area of its own (the pictures: up to about 35 MB) */
-const char *const __dynamic_da_name = "Tube Heap";
+const char *const __dynamic_da_name = "TubeSearch Heap";
 int __dynamic_da_max_size = 128 << 20;
 
 int main (void)

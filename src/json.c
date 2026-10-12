@@ -1,4 +1,4 @@
-/* json.c - see json.h. Part of Tube. MIT licence. */
+/* json.c - see json.h. Part of TubeSearch. MIT licence. */
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>

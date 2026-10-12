@@ -11,7 +11,7 @@
    RISC OS (transport_riscos.c), OpenSSL on Linux (transport_openssl.c),
    or a fake in the tests.
 
-   Part of Tube. MIT licence. */
+   Part of TubeSearch. MIT licence. */
 #ifndef TUBE_HTTP_H
 #define TUBE_HTTP_H
 #include <stddef.h>

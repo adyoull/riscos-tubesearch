@@ -1,6 +1,6 @@
 /* transport.h - the connection layer under http.c for this system:
    AcornSSL on RISC OS (transport_riscos.c), OpenSSL elsewhere
-   (transport_openssl.c). Part of Tube. MIT licence. */
+   (transport_openssl.c). Part of TubeSearch. MIT licence. */
 #ifndef TUBE_TRANSPORT_H
 #define TUBE_TRANSPORT_H
 #include <stddef.h>

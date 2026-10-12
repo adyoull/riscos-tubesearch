@@ -2,11 +2,11 @@
    crossdev's fake RISC OS: a fake Wimp records the windows, the toolbar's
    nesting, text and sprites drawn, menus, errors, files saved and tasks
    started; a fake transport answers with the recorded YouTube fixtures.
-   It drives Tube the way a user would: open the window, search, see the
+   It drives TubeSearch the way a user would: open the window, search, see the
    pictures arrive, play, related videos, a channel, More, Back, menus,
    resizing, a pasted address, and an unplayable video.
      test_ui FIXTURE_DIR
-   Part of Tube. MIT licence. */
+   Part of TubeSearch. MIT licence. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -379,7 +379,7 @@ int main (int argc, char **argv)
   install ();
   setenv ("Wimp$ScrapDir", "RAM::RamDisc0.$.Scrap", 1);
   setenv ("Alias$Reel", "/<Reel$Dir> %*0", 1);
-  unsetenv ("Tube$Dir");
+  unsetenv ("TubeSearch$Dir");
 
   CHECK (ui_init () == 0, "starts");
   CHECK (iconbar_icons == 1 && nwins == 3, "an icon bar icon and three windows");
@@ -390,9 +390,9 @@ int main (int argc, char **argv)
     CHECK (!strcmp ((const char *) b[18], "About this program"), "its title");
     CHECK (!strcmp ((const char *) b[22 + 16 * 3 + 5], "Version"), "a Version label");
     CHECK (!strcmp ((const char *) b[30 + 16 * 3 + 5], TUBE_VERSION " (" TUBE_DATE ")"), "the version and date");
-    CHECK (!strcmp ((const char *) b[30 + 5], "Tube"), "the name");
+    CHECK (!strcmp ((const char *) b[30 + 5], "TubeSearch"), "the name");
   }
-  CHECK (!strcmp (title (), "Tube"), "the window's title");
+  CHECK (!strcmp (title (), "TubeSearch"), "the window's title");
 
   /* Menu on the icon bar icon: Info leads to the Info box */
   click (-2, 0, 100, 20, 2);
@@ -420,7 +420,7 @@ int main (int argc, char **argv)
   pump ();
   CHECK (api_requests == 2, "the visitor ID, then the search");
   CHECK (!strncmp (status (), "24 videos", 9), "the status says how many");
-  CHECK (!strcmp (title (), "Tube: test"), "the title says what was searched for");
+  CHECK (!strcmp (title (), "TubeSearch: test"), "the title says what was searched for");
   CHECK (wins[1].extent[1] <= -(84 + 16 + 9 * 560 + 16), "the extent holds 9 rows (24 + More, 3 across)");
   redraw ();
   CHECK (strstr (drawn, "50 QUESTIONS pour TESTER TON SAVOIR |\nQuiz Culture G\xE9n\xE9rale\n") != NULL,
@@ -452,22 +452,22 @@ int main (int argc, char **argv)
   click_tile (0, 100, 100, 4);
   pump ();
   CHECK (player_requests == 1, "the player asked for the streams");
-  CHECK (!strcmp (saved_path, "RAM::RamDisc0.$.Scrap.TubePlay1"), "Reel's file in the scrap directory");
+  CHECK (!strcmp (saved_path, "RAM::RamDisc0.$.Scrap.TubeSearchPlay1"), "Reel's file in the scrap directory");
   CHECK (saved_data && strstr (saved_data, "\"requested_formats\"") && strstr (saved_data, "itag=137")
          && strstr (saved_data, "itag=140"), "the 1080p video and the AAC sound");
-  CHECK (!strcmp (started, "Reel RAM::RamDisc0.$.Scrap.TubePlay1"), "Reel started with it");
+  CHECK (!strcmp (started, "Reel RAM::RamDisc0.$.Scrap.TubeSearchPlay1"), "Reel started with it");
   CHECK (strstr (status (), "Playing 1080p") != NULL, "the status says it's playing");
 
   /* Adjust: related videos */
   click_tile (0, 100, 100, 1);
   pump ();
-  CHECK (!strcmp (title (), "Tube: Related to Marzia & Felix - Wedding 19.08.2019"), "the related page's title");
+  CHECK (!strcmp (title (), "TubeSearch: Related to Marzia & Felix - Wedding 19.08.2019"), "the related page's title");
   CHECK (!strncmp (status (), "20 videos", 9), "20 related videos");
 
   /* the channel's name on a tile: that channel */
   click_tile (0, 100, 490, 4);
   pump ();
-  CHECK (!strcmp (title (), "Tube: Creative Commons"), "the channel page");
+  CHECK (!strcmp (title (), "TubeSearch: Creative Commons"), "the channel page");
   CHECK (!strncmp (status (), "30 videos", 9), "30 of its videos");
 
   /* More (the 31st tile) */
@@ -480,13 +480,13 @@ int main (int argc, char **argv)
   {
     int before = api_requests;
     click (2, 0, 0, 0, 4);
-    CHECK (!strcmp (title (), "Tube: Related to Marzia & Felix - Wedding 19.08.2019"), "Back: related");
+    CHECK (!strcmp (title (), "TubeSearch: Related to Marzia & Felix - Wedding 19.08.2019"), "Back: related");
     click (2, 0, 0, 0, 4);
-    CHECK (!strcmp (title (), "Tube: test"), "Back again: the search");
+    CHECK (!strcmp (title (), "TubeSearch: test"), "Back again: the search");
     CHECK (!strncmp (status (), "24 videos", 9), "its status back");
     CHECK (api_requests == before, "nothing fetched again");
     click (2, 0, 0, 0, 4);
-    CHECK (!strcmp (title (), "Tube: test"), "Back at the first page does nothing");
+    CHECK (!strcmp (title (), "TubeSearch: test"), "Back at the first page does nothing");
   }
 
   /* Menu on a tile: Play */
@@ -497,7 +497,7 @@ int main (int argc, char **argv)
     int before = player_requests;
     CHECK (ui_event (9, sel) == 0, "choosing Play");
     pump ();
-    CHECK (player_requests == before + 1 && strstr (started, "TubePlay2"), "Play from the menu");
+    CHECK (player_requests == before + 1 && strstr (started, "TubeSearchPlay2"), "Play from the menu");
   }
   /* Menu: Quality > 720p, then play again */
   click_tile (3, 100, 100, 2);
@@ -524,7 +524,7 @@ int main (int argc, char **argv)
   /* a pasted address: related videos, and that one plays */
   type_and_search ("https://www.youtube.com/watch?v=7PIMiDcwNvc&t=10s");
   pump ();
-  CHECK (!strcmp (title (), "Tube: Related to Marzia & Felix - Wedding 19.08.2019"), "an address: related");
+  CHECK (!strcmp (title (), "TubeSearch: Related to Marzia & Felix - Wedding 19.08.2019"), "an address: related");
   CHECK (saved_data && strstr (saved_data, "Marzia & Felix"), "and it plays");
 
   /* a video YouTube won't play */

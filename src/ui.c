@@ -7,7 +7,7 @@
    at the top; the toolbar covers the top TOOLBAR_H of the visible area,
    so the grid starts below it.
 
-   Part of Tube. MIT licence. */
+   Part of TubeSearch. MIT licence. */
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,7 +22,7 @@
 #include "transport.h"
 #include "yt.h"
 
-#define APP_NAME "Tube"
+#define APP_NAME "TubeSearch"
 #ifndef TUBE_VERSION
 #define TUBE_VERSION "0.0.0"             /* (the Makefile sets it) */
 #endif
@@ -800,7 +800,7 @@ static void play_done (yt_play *pl, const char *err, void *ctx)
       return;
     }
   play_file_n = play_file_n % 4 + 1;
-  snprintf (path, sizeof path, "%s.TubePlay%d", scrap && *scrap ? scrap : "<Wimp$ScrapDir>", play_file_n);
+  snprintf (path, sizeof path, "%s.TubeSearchPlay%d", scrap && *scrap ? scrap : "<Wimp$ScrapDir>", play_file_n);
   if (_swix (OS_File, _INR (0, 2) | _INR (4, 5), 10, path, 0xFFF, json, json + strlen (json)))
     {
       snprintf (msg, sizeof msg, "Couldn't write %s", path);
@@ -1084,7 +1084,7 @@ static int create_iconbar_icon (void)
   b[0] = -1;
   b[1] = 0; b[2] = 0; b[3] = 68; b[4] = 68;
   b[5] = 0x301A;
-  memcpy (&b[6], "!tube", 6);
+  memcpy (&b[6], "!tubesearch", 12);
   return fail (_swix (Wimp_CreateIcon, _INR (0, 1), 0, b));
 }
 
@@ -1093,7 +1093,7 @@ int ui_init (void)
   static const int messages[] = { Message_ModeChange, Message_FontChanged, 0 };
   char err[200];
   int alphabet = 0;
-  const char *dir = getenv ("Tube$Dir");
+  const char *dir = getenv ("TubeSearch$Dir");
   if (fail (_swix (Wimp_Initialise, _INR (0, 3) | _OUT (1), 380, TASK_WORD, APP_NAME, messages, &task)))
     return 1;
   if (transport_check (err, sizeof err))
@@ -1101,7 +1101,7 @@ int ui_init (void)
       ui_report (err);
       return 1;
     }
-  /* the settings: !Tube's own Config, then the user's in Choices */
+  /* the settings: !TubeSearch's own Config, then the user's in Choices */
   {
     char path[300];
     const char *choices = getenv ("Choices$Write");
@@ -1112,7 +1112,7 @@ int ui_init (void)
       }
     if (choices)
       {
-        snprintf (path, sizeof path, "%s.Tube.Config", choices);
+        snprintf (path, sizeof path, "%s.TubeSearch.Config", choices);
         yt_config_load (path);
       }
   }

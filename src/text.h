@@ -1,4 +1,4 @@
-/* text.h - UTF-8 text for the RISC OS desktop. Part of Tube. MIT licence. */
+/* text.h - UTF-8 text for the RISC OS desktop. Part of TubeSearch. MIT licence. */
 #ifndef TUBE_TEXT_H
 #define TUBE_TEXT_H
 #include <stddef.h>

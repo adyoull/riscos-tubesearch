@@ -1,4 +1,4 @@
-/* yt.c - see yt.h. Part of Tube. MIT licence. */
+/* yt.c - see yt.h. Part of TubeSearch. MIT licence. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -842,7 +842,7 @@ int yt_parse_player (const char *json, size_t len, int maxq, yt_play *p, char *e
       text_display_buf (buf, buf, sizeof buf);
       snprintf (err, errlen, "YouTube won't play this video%s%s%s",
                 buf[0] ? ": " : "", buf, !strcmp (status ? status : "", "LOGIN_REQUIRED")
-                && strstr (buf, "bot") ? " (try again later, or update the client settings in Tube's Config)" : "");
+                && strstr (buf, "bot") ? " (try again later, or update the client settings in TubeSearch's Config)" : "");
       json_free (d);
       return -1;
     }
@@ -924,7 +924,7 @@ int yt_parse_player (const char *json, size_t len, int maxq, yt_play *p, char *e
   if (!p->video_url && !p->hls_url)
     {
       snprintf (err, errlen, signed_only
-                ? "This video's addresses are scrambled (they need YouTube's JavaScript, which Tube can't run yet)"
+                ? "This video's addresses are scrambled (they need YouTube's JavaScript, which TubeSearch can't run yet)"
                 : "YouTube gave no H.264 streams for this video");
       yt_play_free (p);
       return -1;

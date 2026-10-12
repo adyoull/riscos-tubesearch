@@ -1,19 +1,19 @@
-/* tubecli - Tube's YouTube code from the command line, for trying it out
+/* tscli - TubeSearch's YouTube code from the command line, for trying it out
    and finding faults (on RISC OS in a TaskWindow, or on Linux):
 
-     tubecli search <words...>     videos and channels found
-     tubecli related <video ID>    the videos YouTube suggests next to it
-     tubecli channel <UC... ID>    a channel's videos
-     tubecli play <video ID> [lines] [file]
+     tscli search <words...>     videos and channels found
+     tscli related <video ID>    the videos YouTube suggests next to it
+     tscli channel <UC... ID>    a channel's videos
+     tscli play <video ID> [lines] [file]
                                    chooses the streams and writes what Reel
                                    reads (yt-dlp's JSON) to file (default:
                                    standard output); then *Reel file
    Options before the command:
      -more N      fetch N more parts of a list
      -dump DIR    keep YouTube's raw answers in DIR
-     -config FILE read settings (as !Tube's Config file)
+     -config FILE read settings (as !TubeSearch's Config file)
 
-   Part of Tube. MIT licence. */
+   Part of TubeSearch. MIT licence. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,7 +32,7 @@ static void list_done (int added, const char *err, void *ctx)
   (void) ctx;
   if (added < 0)
     {
-      fprintf (stderr, "tubecli: %s\n", err);
+      fprintf (stderr, "tscli: %s\n", err);
       failed = 1;
     }
   finished = 1;
@@ -43,7 +43,7 @@ static void play_done (yt_play *p, const char *err, void *ctx)
   const char *id = ctx;
   if (!p)
     {
-      fprintf (stderr, "tubecli: %s\n", err);
+      fprintf (stderr, "tscli: %s\n", err);
       failed = 1;
     }
   else
@@ -62,7 +62,7 @@ static void wait_done (void)
     {
       if (!http_poll () && !finished)
         {
-          fprintf (stderr, "tubecli: nothing happening\n");
+          fprintf (stderr, "tscli: nothing happening\n");
           failed = 1;
           return;
         }
@@ -86,7 +86,7 @@ static void print_list (const yt_list *l, int from)
 
 static int usage (void)
 {
-  fprintf (stderr, "usage: tubecli [-more N] [-dump DIR] [-config FILE]\n"
+  fprintf (stderr, "usage: tscli [-more N] [-dump DIR] [-config FILE]\n"
                    "               search WORDS... | related ID | channel ID | play ID [LINES] [FILE]\n");
   return 2;
 }
@@ -105,7 +105,7 @@ int main (int argc, char **argv)
       else if (!strcmp (argv[a], "-config") && a + 1 < argc)
         {
           if (yt_config_load (argv[a + 1]) < 0)
-            fprintf (stderr, "tubecli: can't read %s\n", argv[a + 1]);
+            fprintf (stderr, "tscli: can't read %s\n", argv[a + 1]);
         }
       else
         return usage ();
@@ -115,7 +115,7 @@ int main (int argc, char **argv)
     return usage ();
   if (transport_check (err, sizeof err))
     {
-      fprintf (stderr, "tubecli: %s\n", err);
+      fprintf (stderr, "tscli: %s\n", err);
       return 1;
     }
   http_init (&transport_system);
@@ -134,7 +134,7 @@ int main (int argc, char **argv)
               FILE *f = fopen (argv[a + 3], "w");
               if (!f || fputs (out_json, f) < 0)
                 {
-                  fprintf (stderr, "tubecli: can't write %s\n", argv[a + 3]);
+                  fprintf (stderr, "tscli: can't write %s\n", argv[a + 3]);
                   failed = 1;
                 }
               if (f)

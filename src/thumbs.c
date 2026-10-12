@@ -7,7 +7,7 @@
    a PutSpriteScaled, which is quick. As in Reel, no translation table: a
    16 or 32 bit-per-pixel desktop is assumed.
 
-   Part of Tube. MIT licence. */
+   Part of TubeSearch. MIT licence. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

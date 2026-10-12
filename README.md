@@ -1,23 +1,23 @@
-# Tube: YouTube on RISC OS
+# TubeSearch: YouTube on RISC OS
 
 A desktop program for RISC OS 5 that searches YouTube, shows the results
 with their pictures, and plays the video you click in **Reel**
 (riscos-ffmpeg), which decodes H.264 on the Raspberry Pi's hardware
-through ReelHWAccel. No web browser is involved: Tube talks to YouTube's
+through ReelHWAccel. No web browser is involved: TubeSearch talks to YouTube's
 own API (Innertube) over HTTPS through the AcornSSL module.
 
 Not made by or connected with YouTube or Google.
 
 ## Download
 
-From [Releases](https://github.com/adyoull/riscos-tube/releases):
-`Tube-x.y.z.zip`. Unzip it on RISC OS (SparkFS or InfoZip keep the
+From [Releases](https://github.com/adyoull/riscos-tubesearch/releases):
+`TubeSearch-x.y.z.zip`. Unzip it on RISC OS (SparkFS or InfoZip keep the
 filetypes).
 
 ## Using it
 
-Unzip `Tube-x.y.z.zip`, open the directory with `!Reel` in it once (so
-the `*Reel` command exists), and run `!Tube`. Click its icon bar icon,
+Unzip `TubeSearch-x.y.z.zip`, open the directory with `!Reel` in it once (so
+the `*Reel` command exists), and run `!TubeSearch`. Click its icon bar icon,
 type a search and press Return.
 
 | | |
@@ -44,9 +44,9 @@ desktop.
   break it.
 - **Streams**: the VISIONOS client's `player`, which (October 2026) gives
   plain addresses: no JavaScript deciphering and no proof-of-origin
-  token. Tube picks H.264 (`avc1`) no taller than the chosen quality and
+  token. TubeSearch picks H.264 (`avc1`) no taller than the chosen quality and
   the default AAC track (HLS for live streams).
-- **Playing**: Tube writes a yt-dlp `-j` style JSON file (title, the two
+- **Playing**: TubeSearch writes a yt-dlp `-j` style JSON file (title, the two
   addresses, the User-Agent) to `<Wimp$ScrapDir>` and runs `*Reel` on it.
 - **Network**: `src/http.c` is a non-blocking HTTP/1.1 client (keep-alive,
   chunked, one connection per host), driven from null events so the
@@ -56,10 +56,10 @@ desktop.
   SpriteExtend (`JPEG_PlotScaled` with output switched to the sprite).
 
 YouTube changes its clients every few months. Every client string can be
-overridden in `!Tube.Config` or `Choices:Tube.Config` without a rebuild.
+overridden in `!TubeSearch.Config` or `Choices:TubeSearch.Config` without a rebuild.
 
-`tubecli` (in `!Tube`, and buildable on Linux) runs the same code from a
-command line: `tubecli search …`, `related ID`, `channel UC…`,
+`tscli` (in `!TubeSearch`, and buildable on Linux) runs the same code from a
+command line: `tscli search …`, `related ID`, `channel UC…`,
 `play ID [lines] [file]`, with `-dump DIR` to keep YouTube's answers.
 
 ## Building and testing
@@ -68,7 +68,7 @@ With [riscos-crossdev](https://github.com/adyoull/riscos-crossdev) (a tag,
 toolchain installed with `make prebuilt`):
 
 ```sh
-make RCD_DIR=path/to/riscos-crossdev          # out/Tube-VERSION.zip, after the crossdev checks
+make RCD_DIR=path/to/riscos-crossdev          # out/TubeSearch-VERSION.zip, after the crossdev checks
 make test RCD_DIR=path/to/riscos-crossdev     # all the Linux tests
 ```
 
@@ -82,7 +82,7 @@ The tests use real YouTube answers recorded by NewPipe's test suite
 - `test_ui`: the whole desktop front end against crossdev's fake RISC OS
   (a fake Wimp, SpriteExtend and network): search, pictures, play,
   related, channel, More, Back, menus, resizing, errors;
-- `e2e.sh`: `tubecli` over real TLS against a local stand-in for YouTube;
+- `e2e.sh`: `tscli` over real TLS against a local stand-in for YouTube;
 - the portable code again as ARM code under QEMU with RISC OS's alignment
   trap.
 
@@ -91,6 +91,6 @@ Tested by hand on a Raspberry Pi 4 (RISC OS 5, Reel 0.1.27+).
 ## Licence and support
 
 MIT (`COPYING`). Support is as-is, at the maintainer's own pace; report
-problems in GitHub Issues (say which release, and what `tubecli` prints
+problems in GitHub Issues (say which release, and what `tscli` prints
 for the same search or video). Written with Claude as a coding assistant;
 Andrew Youll directs the work and tests on a Raspberry Pi 4.

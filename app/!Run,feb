@@ -1,16 +1,16 @@
-| !Run for !Tube - browse YouTube on RISC OS and play videos in Reel
+| !Run for !TubeSearch - browse YouTube on RISC OS and play videos in Reel
 | !RunImage is a UnixLib program (Absolute, AIF): it needs SharedUnixLibrary
 | and ARMEABISupport (PackMan), and AcornSSL (RISC OS 5.28 or later) for
 | https. Videos play in Reel (riscos-ffmpeg), which the Filer must have seen.
-Set Tube$Dir <Obey$Dir>
-IconSprites <Tube$Dir>.!Sprites
+Set TubeSearch$Dir <Obey$Dir>
+IconSprites <TubeSearch$Dir>.!Sprites
 RMEnsure SharedUnixLibrary 1.16 IfThere System:Modules.SharedULib Then RMLoad System:Modules.SharedULib
-RMEnsure SharedUnixLibrary 1.16 Error Tube needs SharedUnixLibrary 1.16 or later. Install it with PackMan.
+RMEnsure SharedUnixLibrary 1.16 Error TubeSearch needs SharedUnixLibrary 1.16 or later. Install it with PackMan.
 RMEnsure ARMEABISupport 0 IfThere System:Modules.ARMEABISupport Then RMLoad System:Modules.ARMEABISupport
-RMEnsure ARMEABISupport 0 Error Tube needs the ARMEABISupport module. Install it with PackMan.
+RMEnsure ARMEABISupport 0 Error TubeSearch needs the ARMEABISupport module. Install it with PackMan.
 RMEnsure AcornSSL 0 IfThere System:Modules.Network.URL.AcornSSL Then RMLoad System:Modules.Network.URL.AcornSSL
-RMEnsure AcornSSL 0 Error Tube needs the AcornSSL module (RISC OS 5.28 or later) for secure connections.
+RMEnsure AcornSSL 0 Error TubeSearch needs the AcornSSL module (RISC OS 5.28 or later) for secure connections.
 | The program is small; its memory for lists and pictures is in a dynamic
-| area ("Tube Heap").
+| area ("TubeSearch Heap").
 WimpSlot -min 2048K -max 2048K
-Run <Tube$Dir>.!RunImage %*0
+Run <TubeSearch$Dir>.!RunImage %*0

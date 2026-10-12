@@ -6,9 +6,9 @@
    the WEB client for lists, and the VISIONOS client for the streams,
    which gives addresses that need no JavaScript and no proof-of-origin
    token. YouTube changes these from time to time, so every client
-   string can be overridden (yt_config_set, from Tube's Config file).
+   string can be overridden (yt_config_set, from TubeSearch's Config file).
 
-   Part of Tube. MIT licence. */
+   Part of TubeSearch. MIT licence. */
 #ifndef TUBE_YT_H
 #define TUBE_YT_H
 #include <stddef.h>

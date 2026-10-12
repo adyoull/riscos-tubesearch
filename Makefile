@@ -1,6 +1,6 @@
-# Tube: browse YouTube on RISC OS and play videos in Reel.
+# TubeSearch: browse YouTube on RISC OS and play videos in Reel.
 #
-#   make              the RISC OS programs, the checks, out/!Tube, out/Tube-$(VERSION).zip
+#   make              the RISC OS programs, the checks, out/!TubeSearch, out/TubeSearch-$(VERSION).zip
 #   make test         the Linux tests (parsers, HTTP, end to end over TLS,
 #                     and the same code under QEMU with RISC OS's alignment trap)
 #   make fixtures     fetch the recorded YouTube answers the tests use
@@ -19,32 +19,32 @@ OUT := out
 CORE := src/api.c src/http.c src/yt.c src/json.c src/text.c
 CORE_H := src/api.h src/http.h src/yt.h src/json.h src/text.h src/transport.h
 APP_SRC := src/main.c src/ui.c src/thumbs.c src/transport_riscos.c $(CORE)
-CLI_SRC := src/tubecli.c src/transport_riscos.c $(CORE)
+CLI_SRC := src/tscli.c src/transport_riscos.c $(CORE)
 WARN := -Wall -Wextra -Wno-unused-parameter
 
-all: $(OUT)/Tube-$(VERSION).zip
+all: $(OUT)/TubeSearch-$(VERSION).zip
 test: test-host test-ui test-e2e test-qemu
 check: checks test
 
 # --- RISC OS ------------------------------------------------------------------
-$(OUT)/tube: $(APP_SRC) $(CORE_H) src/ui.h src/thumbs.h Makefile | riscos-toolchain-present
+$(OUT)/tubesearch: $(APP_SRC) $(CORE_H) src/ui.h src/thumbs.h Makefile | riscos-toolchain-present
 	@mkdir -p $(OUT)
 	$(RO_CC) $(RISCOS_CFLAGS) -std=gnu99 $(WARN) $(VERDEFS) $(RISCOS_LDFLAGS) -o $@ $(APP_SRC)
 
-$(OUT)/tubecli: $(CLI_SRC) $(CORE_H) | riscos-toolchain-present
+$(OUT)/tscli: $(CLI_SRC) $(CORE_H) | riscos-toolchain-present
 	@mkdir -p $(OUT)
 	$(RO_CC) $(RISCOS_CFLAGS) -std=gnu99 $(WARN) $(RISCOS_LDFLAGS) -o $@ $(CLI_SRC)
 
-checks: $(OUT)/tube $(OUT)/tubecli
-	$(CHECK_ALL) $(OUT)/tube
-	$(CHECK_ALL) $(OUT)/tubecli
+checks: $(OUT)/tubesearch $(OUT)/tscli
+	$(CHECK_ALL) $(OUT)/tubesearch
+	$(CHECK_ALL) $(OUT)/tscli
 	$(CHECK_UNALIGNED) -Isrc $(sort $(APP_SRC) $(CLI_SRC))
 
-$(OUT)/!Sprites,ff9: app/tube.png app/sm-tube.png
+$(OUT)/!Sprites,ff9: app/tubesearch.png app/sm-tubesearch.png
 	@mkdir -p $(OUT)
-	$(PNG2SPRITE) $@ '!tube=app/tube.png' 'sm!tube=app/sm-tube.png'
+	$(PNG2SPRITE) $@ '!tubesearch=app/tubesearch.png' 'sm!tubesearc=app/sm-tubesearch.png'
 
-app/tube.png app/sm-tube.png: tools/mkicons.py
+app/tubesearch.png app/sm-tubesearch.png: tools/mkicons.py
 	python3 tools/mkicons.py app
 
 APPFILES := app/!Run,feb app/!Boot,feb app/Config,fff $(OUT)/!Help,fff
@@ -52,17 +52,17 @@ $(OUT)/!Help,fff: app/Help.txt
 	@mkdir -p $(OUT)
 	sed 's/@VERSION@/$(VERSION)/' $< > $@
 
-$(OUT)/Tube-$(VERSION).zip: $(OUT)/tube $(OUT)/tubecli $(OUT)/!Sprites,ff9 $(APPFILES) | checks
-	rm -rf $(OUT)/!Tube && mkdir -p $(OUT)/!Tube
-	$(RO_STRIP) -o $(OUT)/tube.stripped $(OUT)/tube
-	$(RO_STRIP) -o $(OUT)/tubecli.stripped $(OUT)/tubecli
-	$(ELF2AIF) -e $(OUT)/tube.stripped $(OUT)/!Tube/!RunImage,ff8 >/dev/null
-	$(ELF2AIF) -e $(OUT)/tubecli.stripped $(OUT)/!Tube/tubecli,ff8 >/dev/null
-	cp $(APPFILES) $(OUT)/!Sprites,ff9 $(OUT)/!Tube/
-	cp COPYING $(OUT)/!Tube/COPYING,fff
+$(OUT)/TubeSearch-$(VERSION).zip: $(OUT)/tubesearch $(OUT)/tscli $(OUT)/!Sprites,ff9 $(APPFILES) | checks
+	rm -rf $(OUT)/!TubeSearch && mkdir -p $(OUT)/!TubeSearch
+	$(RO_STRIP) -o $(OUT)/tubesearch.stripped $(OUT)/tubesearch
+	$(RO_STRIP) -o $(OUT)/tscli.stripped $(OUT)/tscli
+	$(ELF2AIF) -e $(OUT)/tubesearch.stripped $(OUT)/!TubeSearch/!RunImage,ff8 >/dev/null
+	$(ELF2AIF) -e $(OUT)/tscli.stripped $(OUT)/!TubeSearch/tscli,ff8 >/dev/null
+	cp $(APPFILES) $(OUT)/!Sprites,ff9 $(OUT)/!TubeSearch/
+	cp COPYING $(OUT)/!TubeSearch/COPYING,fff
 	rm -f $@
-	$(ROZIP) $@ -C $(OUT) !Tube
-	@echo "$@: unzip on RISC OS and run !Tube"
+	$(ROZIP) $@ -C $(OUT) !TubeSearch
+	@echo "$@: unzip on RISC OS and run !TubeSearch"
 
 # --- Linux tests --------------------------------------------------------------
 HOST_CFLAGS := -std=gnu99 $(WARN) -g -O1 -fsanitize=address,undefined -Isrc
@@ -80,9 +80,9 @@ $(OUT)/test_http: tests/test_http.c src/http.c src/http.h
 	@mkdir -p $(OUT)
 	$(CC) $(HOST_CFLAGS) -o $@ tests/test_http.c src/http.c
 
-$(OUT)/tubecli-linux: src/tubecli.c src/transport_openssl.c $(CORE) $(CORE_H)
+$(OUT)/tscli-linux: src/tscli.c src/transport_openssl.c $(CORE) $(CORE_H)
 	@mkdir -p $(OUT)
-	$(CC) $(HOST_CFLAGS) -o $@ src/tubecli.c src/transport_openssl.c $(CORE) -lssl -lcrypto
+	$(CC) $(HOST_CFLAGS) -o $@ src/tscli.c src/transport_openssl.c $(CORE) -lssl -lcrypto
 
 test-host: $(OUT)/test_yt $(OUT)/test_http fixtures
 	$(OUT)/test_yt $(FIX)
@@ -98,8 +98,8 @@ $(OUT)/test_ui: Makefile tests/test_ui.c src/ui.c src/thumbs.c $(CORE) $(CORE_H)
 test-ui: $(OUT)/test_ui fixtures
 	$(OUT)/test_ui $(FIX)
 
-test-e2e: $(OUT)/tubecli-linux fixtures
-	sh tests/e2e.sh $(OUT)/tubecli-linux
+test-e2e: $(OUT)/tscli-linux fixtures
+	sh tests/e2e.sh $(OUT)/tscli-linux
 
 # The portable code as ARM Linux programs under QEMU with the alignment
 # trap: exit 135 means an unaligned access that would abort on RISC OS.

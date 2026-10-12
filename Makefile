@@ -12,7 +12,9 @@ RCD_DIR ?= ../riscos-crossdev
 include $(RCD_DIR)/riscos.mk
 .DEFAULT_GOAL := all
 
-VERSION := 0.1.0
+VERSION := 0.2.0-rc1
+DATE := 12 Oct 2026
+VERDEFS := -DTUBE_VERSION='"$(VERSION)"' -DTUBE_DATE='"$(DATE)"'
 OUT := out
 CORE := src/api.c src/http.c src/yt.c src/json.c src/text.c
 CORE_H := src/api.h src/http.h src/yt.h src/json.h src/text.h src/transport.h
@@ -25,9 +27,9 @@ test: test-host test-ui test-e2e test-qemu
 check: checks test
 
 # --- RISC OS ------------------------------------------------------------------
-$(OUT)/tube: $(APP_SRC) $(CORE_H) src/ui.h src/thumbs.h | riscos-toolchain-present
+$(OUT)/tube: $(APP_SRC) $(CORE_H) src/ui.h src/thumbs.h Makefile | riscos-toolchain-present
 	@mkdir -p $(OUT)
-	$(RO_CC) $(RISCOS_CFLAGS) -std=gnu99 $(WARN) $(RISCOS_LDFLAGS) -o $@ $(APP_SRC)
+	$(RO_CC) $(RISCOS_CFLAGS) -std=gnu99 $(WARN) $(VERDEFS) $(RISCOS_LDFLAGS) -o $@ $(APP_SRC)
 
 $(OUT)/tubecli: $(CLI_SRC) $(CORE_H) | riscos-toolchain-present
 	@mkdir -p $(OUT)
@@ -88,9 +90,9 @@ test-host: $(OUT)/test_yt $(OUT)/test_http fixtures
 
 # The desktop front end against riscos-crossdev's fake RISC OS (a fake Wimp,
 # SpriteExtend and network): 32-bit, as on RISC OS.
-$(OUT)/test_ui: tests/test_ui.c src/ui.c src/thumbs.c $(CORE) $(CORE_H) src/ui.h src/thumbs.h $(FAKE_SRC)
+$(OUT)/test_ui: Makefile tests/test_ui.c src/ui.c src/thumbs.c $(CORE) $(CORE_H) src/ui.h src/thumbs.h $(FAKE_SRC)
 	@mkdir -p $(OUT)
-	$(FAKE_CC) $(FAKE_CFLAGS) -std=gnu99 -Wno-unused-parameter -fsanitize=address,undefined -Isrc \
+	$(FAKE_CC) $(FAKE_CFLAGS) -std=gnu99 -Wno-unused-parameter -fsanitize=address,undefined -Isrc $(VERDEFS) \
 	  -o $@ tests/test_ui.c src/ui.c src/thumbs.c $(CORE) $(FAKE_SRC)
 
 test-ui: $(OUT)/test_ui fixtures

@@ -23,12 +23,12 @@ static const char *fixdir;
 /* ---- the fake Wimp ------------------------------------------------------ */
 
 typedef struct {
-  int block[22 + 4 * 8];      /* as created */
+  int block[22 + 8 * 8];      /* as created */
   int vis[4], sx, sy, open, parent, nest_flags, opens;
   int extent[4];
 } fwin;
 
-static fwin wins[3];                       /* handle 1: main, 2: toolbar */
+static fwin wins[4];                       /* handle 1: main, 2: toolbar, 3: Info */
 static int nwins, iconbar_icons, forced, carets, extents;
 static char drawn[1 << 20];                /* every string Wimp_TextOp plotted */
 static size_t drawn_len;
@@ -382,8 +382,26 @@ int main (int argc, char **argv)
   unsetenv ("Tube$Dir");
 
   CHECK (ui_init () == 0, "starts");
-  CHECK (iconbar_icons == 1 && nwins == 2, "an icon bar icon and two windows");
+  CHECK (iconbar_icons == 1 && nwins == 3, "an icon bar icon and three windows");
+  /* the Info box: four labels and four values; Version says which */
+  {
+    const int *b = wins[3].block;
+    CHECK (b[21] == 8, "the Info box has eight icons");
+    CHECK (!strcmp ((const char *) b[18], "About this program"), "its title");
+    CHECK (!strcmp ((const char *) b[22 + 16 * 3 + 5], "Version"), "a Version label");
+    CHECK (!strcmp ((const char *) b[30 + 16 * 3 + 5], TUBE_VERSION " (" TUBE_DATE ")"), "the version and date");
+    CHECK (!strcmp ((const char *) b[30 + 5], "Tube"), "the name");
+  }
   CHECK (!strcmp (title (), "Tube"), "the window's title");
+
+  /* Menu on the icon bar icon: Info leads to the Info box */
+  click (-2, 0, 100, 20, 2);
+  {
+    const int *m = (const int *) last_menu;          /* title 3 words, colours, width, height, gap; items of 6 words */
+    CHECK (m && !strcmp ((const char *) &m[7 + 3], "Info") && m[7 + 1] == 3, "Info's submenu is the Info box");
+    CHECK (m && !strcmp ((const char *) &m[7 + 3 * 6 + 3], "Quit") && (m[7 + 3 * 6] & 0x80), "Quit is last");
+    menus_made = 0;
+  }
 
   /* the icon bar icon opens the window, with the toolbar nested inside its top */
   click (-2, 0, 100, 20, 4);

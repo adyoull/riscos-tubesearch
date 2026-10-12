@@ -23,7 +23,12 @@
 #include "yt.h"
 
 #define APP_NAME "Tube"
-#define APP_VERSION "0.1.0"
+#ifndef TUBE_VERSION
+#define TUBE_VERSION "0.0.0"             /* (the Makefile sets it) */
+#endif
+#ifndef TUBE_DATE
+#define TUBE_DATE ""
+#endif
 #define TASK_WORD 0x4B534154          /* "TASK" */
 
 /* Wimp_Poll reasons and messages */
@@ -67,7 +72,7 @@ typedef struct page {
   char status[200];
 } page;
 
-static int task, win = -1, bar = -1, win_open;
+static int task, win = -1, bar = -1, info = -1, win_open;
 static int cols = 3;
 static int screen_w = 3840, screen_h = 2160;
 static int wrap_gen = 1;
@@ -463,6 +468,47 @@ static int create_bar (void)
   return fail (_swix (Wimp_CreateWindow, _IN (1) | _OUT (0), b, &bar));
 }
 
+/* The Info box: the usual program information window, opened by the
+   Wimp as the submenu of Info on the icon bar menu. */
+static int create_info (void)
+{
+  static char title[] = "About this program";
+  static char name[] = APP_NAME;
+  static char purpose[] = "Browse YouTube; play in Reel";
+  static char author[] = "\xA9 Andrew Youll, 2026";
+  static char version[48];
+  static char label_name[] = "Name", label_purpose[] = "Purpose", label_author[] = "Author",
+    label_version[] = "Version", none[] = "";
+  static char *const labels[4] = { label_name, label_purpose, label_author, label_version };
+  char *const values[4] = { name, purpose, author, version };
+  int b[22 + 8 * 8];
+  int w = 920, row = 52, h = 4 * row + 24;
+  snprintf (version, sizeof version, "%s%s%s%s", TUBE_VERSION, TUBE_DATE[0] ? " (" : "", TUBE_DATE,
+            TUBE_DATE[0] ? ")" : "");
+  memset (b, 0, sizeof b);
+  b[0] = 0; b[1] = 0; b[2] = w; b[3] = h;
+  b[6] = -1;
+  b[7] = (int) (0x80000000u | (1u << 26) | 2u | (1u << 4));   /* title; movable; the Wimp redraws it */
+  ((unsigned char *) b)[32] = 7;  ((unsigned char *) b)[33] = 2;
+  ((unsigned char *) b)[34] = 7;  ((unsigned char *) b)[35] = 1;   /* grey */
+  ((unsigned char *) b)[36] = 3;  ((unsigned char *) b)[37] = 1;
+  ((unsigned char *) b)[38] = 12;
+  b[10] = 0; b[11] = -h; b[12] = w; b[13] = 0;
+  b[14] = 0x13D;              /* title: text, border, centred, filled, indirected */
+  b[15] = 0;
+  b[16] = 1;
+  b[18] = (int) title; b[19] = -1; b[20] = sizeof title;
+  b[21] = 8;
+  for (int i = 0; i < 4; i++)
+    {
+      int y1 = -12 - i * row, y0 = y1 - row + 8;
+      /* the label, right-aligned; the value in a box beside it */
+      icon (&b[22 + 16 * i], 8, y0, 196, y1, 0x17000311, labels[i], none, (int) strlen (labels[i]) + 1);
+      icon (&b[30 + 16 * i], 212, y0, w - 16, y1, 0x07000135, values[i], none, (int) strlen (values[i]) + 1);
+    }
+  return fail (_swix (Wimp_CreateWindow, _IN (1) | _OUT (0), b, &info));
+}
+
 /* Opens the toolbar inside the window's top edge (a child window, kept
    there by the Wimp as the window moves and changes size). */
 static void open_bar (const int *main_state)
@@ -841,11 +887,12 @@ static void open_iconbar_menu (int x)
 {
   build_quality_menu ();
   menu_init (&bar_menu, APP_NAME, 240);
-  menu_add (&bar_menu, 0, "Search...", 0, 0);
-  menu_add (&bar_menu, 1, "Quality", (int) &quality_menu, 2 /* dotted line */);
-  menu_add (&bar_menu, 2, "Quit", 0, 0x80);
+  menu_add (&bar_menu, 0, "Info", info, 0);             /* (a window handle: the Wimp opens it) */
+  menu_add (&bar_menu, 1, "Search...", 0, 0);
+  menu_add (&bar_menu, 2, "Quality", (int) &quality_menu, 2 /* dotted line */);
+  menu_add (&bar_menu, 3, "Quit", 0, 0x80);
   menu_open = M_ICONBAR;
-  fail (_swix (Wimp_CreateMenu, _INR (1, 3), &bar_menu, x - 64, 96 + 3 * 44));
+  fail (_swix (Wimp_CreateMenu, _INR (1, 3), &bar_menu, x - 64, 96 + 4 * 44));
 }
 
 static void open_tile_menu (int i, int x, int y)
@@ -900,11 +947,11 @@ static int menu_selection (const int *sel)
   }
   if (menu_open == M_ICONBAR)
     {
-      if (sel[0] == 0)
+      if (sel[0] == 1)
         show_window (1);
-      else if (sel[0] == 1 && sel[1] >= 0)
+      else if (sel[0] == 2 && sel[1] >= 0)
         quality = sel[1] == 0 ? 360 : sel[1] == 1 ? 480 : sel[1] == 2 ? 720 : 1080;
-      else if (sel[0] == 2)
+      else if (sel[0] == 3)
         return 1;
       if (adjust)
         {
@@ -1077,7 +1124,7 @@ int ui_init (void)
   read_screen ();
   http_init (&transport_system);
   thumbs_init (picture_arrived);
-  return create_iconbar_icon () || create_main () || create_bar ();
+  return create_iconbar_icon () || create_main () || create_bar () || create_info ();
 }
 
 int ui_busy (void)

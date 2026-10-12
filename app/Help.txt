@@ -32,6 +32,9 @@ In the window:
   Back                  the page before (up to 24 are kept)
   Menu                  Play, Related, Channel, Back, and Quality
 
+Menu on the icon bar icon has Info (the version), Search..., Quality
+and Quit.
+
 Quality (on the menus) is the tallest video asked for: 360p, 480p,
 720p or 1080p (the default). Tube asks YouTube for H.264 video, which
 the Pi decodes in hardware up to 1080p, and AAC sound. Live streams are
@@ -66,4 +69,7 @@ and find faults:
 
 Licence
 -------
-MIT (see COPYING). Written with the help of Claude (Anthropic).
+MIT (see COPYING). Source and releases:
+https://github.com/adyoull/riscos-tube (problems: GitHub Issues).
+Written with Claude as a coding assistant; Andrew Youll directs the
+work and tests on a Raspberry Pi 4.

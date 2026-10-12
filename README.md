@@ -8,6 +8,12 @@ own API (Innertube) over HTTPS through the AcornSSL module.
 
 Not made by or connected with YouTube or Google.
 
+## Download
+
+From [Releases](https://github.com/adyoull/riscos-tube/releases):
+`Tube-x.y.z.zip`. Unzip it on RISC OS (SparkFS or InfoZip keep the
+filetypes).
+
 ## Using it
 
 Unzip `Tube-x.y.z.zip`, open the directory with `!Reel` in it once (so
@@ -23,6 +29,7 @@ type a search and press Return.
 | Back | the page before |
 | Menu | Play, Related, Channel, Back, Quality (360p–1080p) |
 | a pasted YouTube address | plays it, and shows what's related |
+| Menu on the icon bar icon | Info, Search, Quality, Quit |
 
 Needs RISC OS 5.28 or later (AcornSSL), SharedUnixLibrary 1.16+ and
 ARMEABISupport (PackMan), Reel 0.1.27+, and a 16 or 32 bit-per-pixel
@@ -61,7 +68,7 @@ With [riscos-crossdev](https://github.com/adyoull/riscos-crossdev) (a tag,
 toolchain installed with `make prebuilt`):
 
 ```sh
-make RCD_DIR=path/to/riscos-crossdev          # out/Tube-0.1.0.zip, after the crossdev checks
+make RCD_DIR=path/to/riscos-crossdev          # out/Tube-VERSION.zip, after the crossdev checks
 make test RCD_DIR=path/to/riscos-crossdev     # all the Linux tests
 ```
 
@@ -79,8 +86,11 @@ The tests use real YouTube answers recorded by NewPipe's test suite
 - the portable code again as ARM code under QEMU with RISC OS's alignment
   trap.
 
-None of this has run on RISC OS itself yet: it needs testing on a Pi.
+Tested by hand on a Raspberry Pi 4 (RISC OS 5, Reel 0.1.27+).
 
-## Licence
+## Licence and support
 
-MIT (`COPYING`). Written with the help of Claude (Anthropic).
+MIT (`COPYING`). Support is as-is, at the maintainer's own pace; report
+problems in GitHub Issues (say which release, and what `tubecli` prints
+for the same search or video). Written with Claude as a coding assistant;
+Andrew Youll directs the work and tests on a Raspberry Pi 4.

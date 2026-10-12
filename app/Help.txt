@@ -1,0 +1,69 @@
+!Tube - browse YouTube on RISC OS                         @VERSION@
+===================================================================
+
+Tube shows YouTube's videos in a desktop window, with their pictures,
+and plays the one you click in Reel (riscos-ffmpeg), which uses the
+Raspberry Pi's hardware decoder through ReelHWAccel. It is not made by
+or connected with YouTube or Google.
+
+It needs:
+  - RISC OS 5.28 or later (the AcornSSL module, for https);
+  - SharedUnixLibrary 1.16 or later and ARMEABISupport (PackMan);
+  - Reel 0.1.27 or later: open the directory that has !Reel in it once,
+    so the Filer has seen it (that sets up the *Reel command Tube uses);
+  - a desktop of 32 thousand or 16 million colours (the pictures are
+    plotted without a colour table).
+
+Using it
+--------
+Double-click !Tube: its icon (a telly) appears on the icon bar. Click it
+to open the window. Type what you want to watch in the box at the top
+and press Return (or click Search). You can also paste a YouTube address
+(youtube.com/watch?v=..., youtu.be/...): Tube plays that video and shows
+the ones related to it.
+
+In the window:
+  Select on a video     plays it in Reel
+  Adjust on a video     shows the videos related to it
+  Select on the         shows that channel's videos
+    channel's name
+  Select on a channel   (in search results) its videos
+  More (the last tile)  fetches the next part of the list
+  Back                  the page before (up to 24 are kept)
+  Menu                  Play, Related, Channel, Back, and Quality
+
+Quality (on the menus) is the tallest video asked for: 360p, 480p,
+720p or 1080p (the default). Tube asks YouTube for H.264 video, which
+the Pi decodes in hardware up to 1080p, and AAC sound. Live streams are
+played from YouTube's HLS playlists.
+
+Reel is given a small file in <Wimp$ScrapDir> (TubePlay1 to 4) in the
+same form as yt-dlp's -j output: the title, the two addresses and the
+headers. Reel's own Media info window shows what's playing.
+
+When it stops working
+---------------------
+YouTube changes what it expects from its apps every few months. Tube
+copies the requests that yt-dlp and NewPipe make (October 2026). If
+videos stop playing ("Sign in to confirm you're not a bot", or "no
+H.264 streams"), newer client names and versions can be put in the
+Config file inside !Tube (or a copy in Choices:Tube.Config, which wins)
+without a new Tube; the file says where to find them.
+
+The addresses YouTube gives work only from the internet connection that
+asked for them, and for a few hours.
+
+tubecli
+-------
+!Tube.tubecli is the same YouTube code for a TaskWindow, to try things
+and find faults:
+  tubecli search <words>          the results, as text
+  tubecli related <video ID>
+  tubecli channel <UC... ID>
+  tubecli play <video ID> [lines] [file]   writes Reel's file
+  tubecli -dump <directory> ...   keeps YouTube's raw answers
+  tubecli -config <file> ...      reads settings as Config does
+
+Licence
+-------
+MIT (see COPYING). Written with the help of Claude (Anthropic).

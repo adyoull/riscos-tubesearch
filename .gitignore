@@ -1,0 +1,7 @@
+out/
+tests/fixtures/
+tests/.newpipe/
+handoffs/
+*handoff*.md
+*START-HERE*.md
+.DS_Store

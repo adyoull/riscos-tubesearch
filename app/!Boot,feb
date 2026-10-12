@@ -1,0 +1,3 @@
+| !Boot for !Tube: the Filer runs this when it first sees the application
+If "<Tube$Dir>"="" Then Set Tube$Dir <Obey$Dir>
+IconSprites <Obey$Dir>.!Sprites

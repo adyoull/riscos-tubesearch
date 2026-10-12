@@ -1,0 +1,1162 @@
+/* ui.c - see ui.h. The window and menus are built in code (no Templates
+   file), with the block layouts from the PRMs (Wimp_CreateWindow,
+   Wimp_CreateIcon, Wimp_CreateMenu) and the nested Wimp's toolbar (a
+   child window, Wimp_OpenWindow with "TASK").
+
+   Coordinates: everything is in OS units. Work area y runs down from 0
+   at the top; the toolbar covers the top TOOLBAR_H of the visible area,
+   so the grid starts below it.
+
+   Part of Tube. MIT licence. */
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <kernel.h>
+#include <swis.h>
+#include "ui.h"
+#include "api.h"
+#include "http.h"
+#include "text.h"
+#include "thumbs.h"
+#include "transport.h"
+#include "yt.h"
+
+#define APP_NAME "Tube"
+#define APP_VERSION "0.1.0"
+#define TASK_WORD 0x4B534154          /* "TASK" */
+
+/* Wimp_Poll reasons and messages */
+enum { Null_Reason = 0, Redraw_Window_Request = 1, Open_Window_Request = 2, Close_Window_Request = 3,
+       Mouse_Click = 6, Key_Pressed = 8, Menu_Selection = 9, User_Message = 17,
+       User_Message_Recorded = 18 };
+enum { Button_Adjust = 1, Button_Menu = 2, Button_Select = 4 };
+#define Message_Quit 0
+#define Message_ModeChange 0x400C1
+#define Message_FontChanged 0x400CF
+
+/* layout (OS units) */
+#define TOOLBAR_H 84
+#define PAD 16
+#define TILE_W 680
+#define TILE_H 560
+#define THUMB_W 640                   /* 320 x 180 pixels at 90 dpi */
+#define THUMB_H 360
+#define LINE_H 40
+#define TEXT_W (TILE_W - 40)
+
+/* toolbar icons */
+enum { I_BACK, I_FIELD, I_SEARCH, I_STATUS };
+
+#define MAX_PAGES 24
+
+typedef struct {
+  char line[2][192];          /* the title, wrapped into two lines */
+  int wrapped;                /* for wrap_gen */
+} tile_text;
+
+typedef struct page {
+  int kind;                   /* YT_LIST_* */
+  char *arg;                  /* query, video ID or channel ID */
+  char *heading;              /* for the title bar */
+  yt_list list;
+  tile_text *text;            /* one per item */
+  int text_cap;
+  api_op *op;                 /* fetching (the first part or more) */
+  int scroll_y;
+  char status[200];
+} page;
+
+static int task, win = -1, bar = -1, win_open;
+static int cols = 3;
+static int screen_w = 3840, screen_h = 2160;
+static int wrap_gen = 1;
+static page *pages[MAX_PAGES];
+static int depth;
+static api_op *play_op;
+static char play_id[40];
+static int play_file_n;
+static int quality = 1080;
+
+static char title_buf[300] = APP_NAME;
+static char field_buf[256];
+static char status_buf[200] = "Type what you'd like to watch and press Return";
+
+/* ---- small helpers ------------------------------------------------------ */
+
+void ui_report (const char *msg)
+{
+  _kernel_oserror e;
+  e.errnum = 0;
+  snprintf (e.errmess, sizeof e.errmess, "%.250s", msg);
+  _swix (Wimp_ReportError, _INR (0, 2), &e, 1 /* OK */, APP_NAME);
+}
+
+static int fail (const _kernel_oserror *e)
+{
+  if (e)
+    ui_report (e->errmess);
+  return e != NULL;
+}
+
+static page *cur (void)
+{
+  return depth ? pages[depth - 1] : NULL;
+}
+
+static void set_status (const char *fmt, ...) __attribute__ ((format (printf, 1, 2)));
+static void set_status (const char *fmt, ...)
+{
+  int b[4] = { 0, I_STATUS, 0, 0 };
+  va_list ap;
+  va_start (ap, fmt);
+  vsnprintf (status_buf, sizeof status_buf, fmt, ap);
+  va_end (ap);
+  if (bar != -1)
+    {
+      b[0] = bar;
+      _swix (Wimp_SetIconState, _IN (1), b);
+    }
+}
+
+static void set_title (void)
+{
+  page *p = cur ();
+  snprintf (title_buf, sizeof title_buf, "%s%s%s", APP_NAME, p && p->heading ? ": " : "",
+            p && p->heading ? p->heading : "");
+  if (win != -1)
+    _swix (Wimp_ForceRedraw, _INR (0, 2), win, TASK_WORD, 3);    /* the title bar */
+}
+
+static void text_colour (unsigned fg, unsigned bg)
+{
+  _swix (Wimp_TextOp, _INR (0, 2), 0, fg, bg);
+}
+
+static void text_plot (const char *t, int x, int y)
+{
+  _swix (Wimp_TextOp, _INR (0, 5), 2, t, -1, -1, x, y);
+}
+
+static int text_width (const char *t, int n)
+{
+  int w = 0;
+  if (_swix (Wimp_TextOp, _INR (0, 2) | _OUT (0), 1, t, n, &w))
+    return n * 16;
+  return w;
+}
+
+static void fill_rect (unsigned colour, int x0, int y0, int x1, int y1)
+{
+  _swix (ColourTrans_SetGCOL, _IN (0) | _INR (3, 4), colour, 0, 0);
+  _swix (OS_Plot, _INR (0, 2), 4, x0, y0);
+  _swix (OS_Plot, _INR (0, 2), 96 + 5, x1 - 1, y1 - 1);
+}
+
+/* s cut to fit maxw, at a word if it can, "..." added when cut. */
+static void fit (const char *s, int maxw, char *out, size_t size, const char **rest)
+{
+  size_t n = strlen (s), best = 0;
+  if (rest)
+    *rest = s + n;
+  if (text_width (s, 0) <= maxw)
+    {
+      snprintf (out, size, "%s", s);
+      return;
+    }
+  /* the longest prefix that fits, by halving */
+  {
+    size_t lo = 0, hi = n;
+    while (lo < hi)
+      {
+        size_t mid = (lo + hi + 1) / 2;
+        if (text_width (s, (int) mid) <= maxw)
+          lo = mid;
+        else
+          hi = mid - 1;
+      }
+    best = lo;
+  }
+  while (best > 0 && ((unsigned char) s[best] & 0xC0) == 0x80)
+    best--;                                   /* (not in the middle of a UTF-8 character) */
+  if (rest)
+    {
+      /* a line break: back to the last space */
+      size_t b = best;
+      while (b > 0 && s[b] != ' ')
+        b--;
+      if (b > best / 2)
+        best = b;
+      snprintf (out, size, "%.*s", (int) best, s);
+      *rest = s + best;
+      while (**rest == ' ')
+        (*rest)++;
+      return;
+    }
+  /* the end: make room for the dots */
+  while (best > 0)
+    {
+      char tmp[400];
+      snprintf (tmp, sizeof tmp, "%.*s...", (int) best, s);
+      if (text_width (tmp, 0) <= maxw)
+        break;
+      best--;
+      while (best > 0 && ((unsigned char) s[best] & 0xC0) == 0x80)
+        best--;
+    }
+  snprintf (out, size, "%.*s...", (int) best, s);
+}
+
+static void wrap_title (page *p, int i)
+{
+  tile_text *t = &p->text[i];
+  const char *rest;
+  if (t->wrapped == wrap_gen)
+    return;
+  fit (p->list.items[i].title, TEXT_W, t->line[0], sizeof t->line[0], &rest);
+  if (*rest)
+    fit (rest, TEXT_W, t->line[1], sizeof t->line[1], NULL);
+  else
+    t->line[1][0] = 0;
+  t->wrapped = wrap_gen;
+}
+
+static int ensure_text (page *p)
+{
+  if (p->text_cap < p->list.n)
+    {
+      int cap = p->list.n + 32;
+      tile_text *n = realloc (p->text, (size_t) cap * sizeof *n);
+      if (!n)
+        return -1;
+      memset (n + p->text_cap, 0, (size_t) (cap - p->text_cap) * sizeof *n);
+      p->text = n;
+      p->text_cap = cap;
+    }
+  return 0;
+}
+
+/* ---- layout ------------------------------------------------------------- */
+
+/* The tiles on a page: its items, and a "More" tile when there are more. */
+static int tiles (const page *p)
+{
+  return !p ? 0 : p->list.n + (p->list.continuation || (p->op && p->list.n) ? 1 : 0);
+}
+
+static int extent_height (void)
+{
+  page *p = cur ();
+  int rows = (tiles (p) + cols - 1) / cols;
+  return TOOLBAR_H + PAD + rows * TILE_H + PAD;
+}
+
+static void set_extent (void)
+{
+  int b[4];
+  b[0] = 0;
+  b[1] = -extent_height ();
+  b[2] = screen_w;
+  b[3] = 0;
+  if (b[1] > -screen_h)
+    b[1] = -screen_h;
+  _swix (Wimp_SetExtent, _INR (0, 1), win, b);
+}
+
+static void tile_box (int i, int *x0, int *y1)
+{
+  *x0 = PAD + (i % cols) * TILE_W;
+  *y1 = -(TOOLBAR_H + PAD + (i / cols) * TILE_H);
+}
+
+static void redraw_all (void)
+{
+  _swix (Wimp_ForceRedraw, _INR (0, 4), win, 0, -extent_height () - screen_h, screen_w, 0);
+}
+
+static void redraw_tile (int i)
+{
+  int x0, y1;
+  tile_box (i, &x0, &y1);
+  _swix (Wimp_ForceRedraw, _INR (0, 4), win, x0, y1 - TILE_H, x0 + TILE_W, y1);
+}
+
+static void read_screen (void)
+{
+  int xeig = 1, yeig = 1, xlim = 1919, ylim = 1079;
+  _swix (OS_ReadModeVariable, _INR (0, 1) | _OUT (2), -1, 4, &xeig);
+  _swix (OS_ReadModeVariable, _INR (0, 1) | _OUT (2), -1, 5, &yeig);
+  _swix (OS_ReadModeVariable, _INR (0, 1) | _OUT (2), -1, 11, &xlim);
+  _swix (OS_ReadModeVariable, _INR (0, 1) | _OUT (2), -1, 12, &ylim);
+  screen_w = (xlim + 1) << xeig;
+  screen_h = (ylim + 1) << yeig;
+}
+
+/* ---- drawing ------------------------------------------------------------ */
+
+static void draw_tile (page *p, int i, int ox, int oy)
+{
+  int x0, y1, sx, sy, tx, ty;
+  tile_box (i, &x0, &y1);
+  sx = ox + x0;
+  sy = oy + y1;
+  tx = sx + 20;
+  ty = sy - 20 - THUMB_H;                         /* the bottom of the picture */
+  if (i >= p->list.n)
+    {
+      /* the "More" tile */
+      const char *t = p->op ? "Loading..." : "More";
+      int w = text_width (t, 0);
+      fill_rect (0xEEEEEE00u, tx, ty, tx + THUMB_W, ty + THUMB_H);
+      text_colour (0x44444400u, 0xEEEEEE00u);
+      text_plot (t, tx + (THUMB_W - w) / 2, ty + THUMB_H / 2 - 10);
+      return;
+    }
+  {
+    yt_item *it = &p->list.items[i];
+    int chan = it->kind == YT_CHANNEL;
+    int pw = chan ? 180 : 320, ph = 180;          /* picture size, pixels */
+    int px = tx + (THUMB_W - pw * 2) / 2;
+    thumb *th = thumb_get (it->thumb_url, pw, ph);
+    if (thumb_ready (th) == 1)
+      thumb_plot (th, px, ty);
+    else
+      fill_rect (thumb_ready (th) < 0 ? 0xCCCCCC00u : 0xE4E4E400u, px, ty, px + pw * 2, ty + THUMB_H);
+    if (it->duration[0])
+      {
+        int w = text_width (it->duration, 0) + 16;
+        unsigned bg = !strcmp (it->duration, "LIVE") ? 0x0000CC00u : 0x10101000u;
+        fill_rect (bg, tx + THUMB_W - w - 8, ty + 8, tx + THUMB_W - 8, ty + 8 + LINE_H);
+        text_colour (0xFFFFFF00u, bg);
+        text_plot (it->duration, tx + THUMB_W - w, ty + 8 + 10);
+      }
+    if (ensure_text (p) == 0)
+      {
+        wrap_title (p, i);
+        text_colour (0x00000000u, 0xFFFFFF00u);
+        text_plot (p->text[i].line[0], tx, ty - 8 - LINE_H + 10);
+        text_plot (p->text[i].line[1], tx, ty - 8 - 2 * LINE_H + 10);
+      }
+    {
+      char buf[200];
+      fit (chan ? "Channel" : it->channel, TEXT_W, buf, sizeof buf, NULL);
+      text_colour (chan ? 0x60606000u : 0x80300000u, 0xFFFFFF00u);   /* channel names: dark blue */
+      text_plot (buf, tx, ty - 8 - 3 * LINE_H + 10);
+      fit (it->meta, TEXT_W, buf, sizeof buf, NULL);
+      text_colour (0x70707000u, 0xFFFFFF00u);
+      text_plot (buf, tx, ty - 8 - 4 * LINE_H + 10);
+    }
+  }
+}
+
+static void draw (int *b, int more)
+{
+  page *p = cur ();
+  while (more)
+    {
+      int ox = b[1] - b[5], oy = b[4] - b[6];   /* screen position of the work area origin */
+      int cy0 = b[8] - oy, cy1 = b[10] - oy;    /* the clip box, in work area y */
+      if (!p || (!p->list.n && !p->op))
+        {
+          const char *t = p ? p->status : "Type what you'd like to watch in the box above, then press Return.";
+          text_colour (0x60606000u, 0xFFFFFF00u);
+          text_plot (t, ox + PAD + 20, oy - TOOLBAR_H - PAD - 60);
+          if (!p)
+            {
+              text_plot ("Select on a video plays it in Reel. Adjust shows related videos.",
+                         ox + PAD + 20, oy - TOOLBAR_H - PAD - 120);
+              text_plot ("Click a channel's name for its videos. Menu has more.",
+                         ox + PAD + 20, oy - TOOLBAR_H - PAD - 170);
+            }
+        }
+      else
+        {
+          int n = tiles (p);
+          int row0 = (-cy1 - TOOLBAR_H - PAD) / TILE_H, row1 = (-cy0 - TOOLBAR_H - PAD) / TILE_H;
+          if (row0 < 0)
+            row0 = 0;
+          for (int row = row0; row <= row1; row++)
+            for (int c = 0; c < cols; c++)
+              {
+                int i = row * cols + c;
+                if (i < n)
+                  draw_tile (p, i, ox, oy);
+              }
+        }
+      if (_swix (Wimp_GetRectangle, _IN (1) | _OUT (0), b, &more))
+        break;
+    }
+}
+
+static void redraw (int *b)
+{
+  int more = 0;
+  if (_swix (Wimp_RedrawWindow, _IN (1) | _OUT (0), b, &more))
+    return;
+  draw (b, more);
+}
+
+/* ---- windows ------------------------------------------------------------ */
+
+static int create_main (void)
+{
+  int b[23];
+  int w = 3 * TILE_W + 2 * PAD + 40, h = 2 * TILE_H + TOOLBAR_H + 200;
+  memset (b, 0, sizeof b);
+  if (w > screen_w - 200)
+    w = screen_w - 200;
+  if (h > screen_h - 300)
+    h = screen_h - 300;
+  b[0] = (screen_w - w) / 2;
+  b[1] = (screen_h - h) / 2;
+  b[2] = b[0] + w;
+  b[3] = b[1] + h;
+  b[6] = -1;
+  /* new flags: back, close, title, toggle size, vertical scroll bar, adjust
+     size; movable; the program draws the work area */
+  b[7] = (int) (0x80000000u | (1u << 24) | (1u << 25) | (1u << 26) | (1u << 27) | (1u << 28) | (1u << 29) | 2u);
+  ((unsigned char *) b)[32] = 7;  ((unsigned char *) b)[33] = 2;   /* title */
+  ((unsigned char *) b)[34] = 7;  ((unsigned char *) b)[35] = 0;   /* work area: white */
+  ((unsigned char *) b)[36] = 3;  ((unsigned char *) b)[37] = 1;   /* scroll bar */
+  ((unsigned char *) b)[38] = 12;
+  b[10] = 0; b[11] = -screen_h; b[12] = screen_w; b[13] = 0;      /* work area */
+  b[14] = 0x13D;              /* title: text, border, centred, filled, indirected */
+  b[15] = 3 << 12;            /* work area: clicks */
+  b[16] = 1;
+  b[17] = 0;
+  b[18] = (int) title_buf; b[19] = -1; b[20] = sizeof title_buf;
+  b[21] = 0;
+  return fail (_swix (Wimp_CreateWindow, _IN (1) | _OUT (0), b, &win));
+}
+
+static void icon (int *ic, int x0, int y0, int x1, int y1, int flags, char *text, const char *valid, int size)
+{
+  ic[0] = x0; ic[1] = y0; ic[2] = x1; ic[3] = y1;
+  ic[4] = flags;
+  ic[5] = (int) text; ic[6] = (int) valid; ic[7] = size;
+}
+
+static int create_bar (void)
+{
+  static char back_text[] = "Back", search_text[] = "Search";
+  static char back_valid[] = "R5,3", search_valid[] = "R6,3", field_valid[] = "Pptr_write;R7",
+    status_valid[] = "";
+  int b[22 + 4 * 8];
+  memset (b, 0, sizeof b);
+  b[0] = 0; b[1] = 0; b[2] = 1000; b[3] = TOOLBAR_H;
+  b[6] = -1;
+  b[7] = (int) (0x80000000u | (1u << 4));          /* no furniture; the Wimp draws it */
+  ((unsigned char *) b)[32] = 7;  ((unsigned char *) b)[33] = 2;
+  ((unsigned char *) b)[34] = 7;  ((unsigned char *) b)[35] = 1;  /* light grey */
+  ((unsigned char *) b)[36] = 3;  ((unsigned char *) b)[37] = 1;
+  ((unsigned char *) b)[38] = 12;
+  b[10] = 0; b[11] = -TOOLBAR_H; b[12] = screen_w; b[13] = 0;
+  b[14] = 0;
+  b[15] = 0;
+  b[16] = 1;
+  b[21] = 4;
+  /* Back, the search box, Search, the status line */
+  icon (&b[22], 12, -72, 136, -12, 0x1700313D, back_text, back_valid, sizeof back_text);
+  icon (&b[30], 148, -72, 1060, -12, 0x0700F135, field_buf, field_valid, sizeof field_buf);
+  icon (&b[38], 1072, -72, 1232, -12, 0x1700313D, search_text, search_valid, sizeof search_text);
+  icon (&b[46], 1250, -72, 3800, -12, 0x15000131, status_buf, status_valid, sizeof status_buf);
+  return fail (_swix (Wimp_CreateWindow, _IN (1) | _OUT (0), b, &bar));
+}
+
+/* Opens the toolbar inside the window's top edge (a child window, kept
+   there by the Wimp as the window moves and changes size). */
+static void open_bar (const int *main_state)
+{
+  int b[8];
+  unsigned flags = (1u << 16)      /* left edge: the parent's visible left */
+                   | (2u << 18)    /* bottom: the parent's visible top */
+                   | (2u << 20)    /* right: the parent's visible right */
+                   | (2u << 22)    /* top: the parent's visible top */
+                   | (1u << 24)    /* x scroll: fixed to the left */
+                   | (2u << 26);   /* y scroll: fixed to the top */
+  b[0] = bar;
+  b[1] = main_state[1];
+  b[2] = main_state[4] - TOOLBAR_H;
+  b[3] = main_state[3];
+  b[4] = main_state[4];
+  b[5] = 0;
+  b[6] = 0;
+  b[7] = -1;
+  fail (_swix (Wimp_OpenWindow, _INR (1, 4), b, TASK_WORD, win, flags));
+}
+
+static void open_main (int *b)
+{
+  int new_cols;
+  if (fail (_swix (Wimp_OpenWindow, _IN (1), b)))
+    return;
+  win_open = 1;
+  new_cols = (b[3] - b[1] - 2 * PAD) / TILE_W;
+  if (new_cols < 1)
+    new_cols = 1;
+  if (new_cols != cols)
+    {
+      cols = new_cols;
+      set_extent ();
+      redraw_all ();
+      _swix (Wimp_OpenWindow, _IN (1), b);      /* (the extent may have moved the scroll) */
+    }
+  open_bar (b);
+}
+
+static void show_window (int caret)
+{
+  int b[9];
+  b[0] = win;
+  if (fail (_swix (Wimp_GetWindowState, _IN (1), b)))
+    return;
+  b[7] = -1;
+  open_main (b);
+  if (caret)
+    _swix (Wimp_SetCaretPosition, _INR (0, 5), bar, I_FIELD, -1, -1, -1, (int) strlen (field_buf));
+}
+
+/* Scrolls the window to y (from the page's remembered position). */
+static void scroll_to (int y)
+{
+  int b[9];
+  b[0] = win;
+  if (_swix (Wimp_GetWindowState, _IN (1), b))
+    return;
+  b[6] = y;
+  if (win_open)
+    open_main (b);
+}
+
+/* ---- pages -------------------------------------------------------------- */
+
+static void free_page (page *p)
+{
+  if (!p)
+    return;
+  api_cancel (p->op);
+  yt_list_free (&p->list);
+  free (p->text);
+  free (p->arg);
+  free (p->heading);
+  free (p);
+}
+
+static void list_done (int added, const char *err, void *ctx)
+{
+  page *p = ctx;
+  p->op = NULL;
+  if (added < 0)
+    snprintf (p->status, sizeof p->status, "%s", err);
+  else
+    {
+      if (!p->heading || p->kind != YT_LIST_SEARCH)
+        {
+          char h[256];
+          if (p->kind == YT_LIST_RELATED)
+            snprintf (h, sizeof h, "Related to %s", p->list.title ? p->list.title : p->arg);
+          else if (p->kind == YT_LIST_CHANNEL)
+            snprintf (h, sizeof h, "%s", p->list.title ? p->list.title : p->arg);
+          else
+            snprintf (h, sizeof h, "%s", p->arg);
+          free (p->heading);
+          p->heading = strdup (h);
+        }
+      if (!p->list.n)
+        snprintf (p->status, sizeof p->status, "Nothing found");
+      else
+        snprintf (p->status, sizeof p->status, "%d %s%s", p->list.n, p->list.n == 1 ? "video" : "videos",
+                  p->list.continuation ? " (More at the end)" : "");
+    }
+  if (p == cur ())
+    {
+      /* (a page's status is its list's; playing only shows for a while) */
+      set_status ("%s", p->status);
+      set_title ();
+      ensure_text (p);
+      set_extent ();
+      redraw_all ();
+      /* the pictures, in order (the ones on screen are asked for as they're drawn) */
+      for (int i = 0; i < p->list.n; i++)
+        thumb_get (p->list.items[i].thumb_url, p->list.items[i].kind == YT_CHANNEL ? 180 : 320, 180);
+    }
+}
+
+/* Shows a new page, fetching its list. */
+static void go (int kind, const char *arg, const char *heading)
+{
+  page *p = calloc (1, sizeof *p);
+  int b[9];
+  if (!p || !(p->arg = strdup (arg)))
+    {
+      free (p);
+      ui_report ("Out of memory");
+      return;
+    }
+  p->kind = kind;
+  p->heading = heading ? strdup (heading) : NULL;
+  /* remember where the old page was scrolled to */
+  if (cur ())
+    {
+      b[0] = win;
+      if (!_swix (Wimp_GetWindowState, _IN (1), b))
+        cur ()->scroll_y = b[6];
+      api_cancel (cur ()->op);
+      cur ()->op = NULL;
+    }
+  if (depth == MAX_PAGES)
+    {
+      free_page (pages[0]);
+      memmove (pages, pages + 1, (MAX_PAGES - 1) * sizeof pages[0]);
+      depth--;
+    }
+  pages[depth++] = p;
+  thumbs_cancel_pending ();
+  p->op = api_list (kind, arg, 0, &p->list, list_done, p);
+  snprintf (p->status, sizeof p->status, "%s",
+            !p->op ? "Out of memory" : kind == YT_LIST_SEARCH ? "Searching..." : "Loading...");
+  set_status ("%s", p->status);
+  set_title ();
+  set_extent ();
+  if (!win_open)
+    show_window (0);
+  scroll_to (0);
+  redraw_all ();
+}
+
+static void go_back (void)
+{
+  page *p;
+  if (depth <= 1)
+    return;
+  free_page (pages[--depth]);
+  p = cur ();
+  thumbs_cancel_pending ();
+  set_status ("%s", p->status);
+  set_title ();
+  set_extent ();
+  /* a page left before its list arrived: ask again */
+  if (!p->list.n && !p->op)
+    {
+      p->op = api_list (p->kind, p->arg, 0, &p->list, list_done, p);
+      snprintf (p->status, sizeof p->status, "Loading...");
+      set_status ("%s", p->status);
+    }
+  scroll_to (p->scroll_y);
+  redraw_all ();
+}
+
+static void more (void)
+{
+  page *p = cur ();
+  if (!p || p->op || !p->list.continuation)
+    return;
+  p->op = api_list (p->kind, p->list.continuation, 1, &p->list, list_done, p);
+  if (p->op)
+    {
+      set_status ("Loading more...");
+      redraw_tile (p->list.n);
+    }
+}
+
+/* A YouTube address typed or pasted in: its video ID (11 characters). */
+static int video_id_in (const char *q, char *id)
+{
+  static const char *const marks[] = { "v=", "youtu.be/", "/shorts/", "/live/", "/embed/", NULL };
+  for (int m = 0; marks[m]; m++)
+    {
+      const char *s = strstr (q, marks[m]);
+      int n = 0;
+      if (!s)
+        continue;
+      s += strlen (marks[m]);
+      while (n < 11 && ((s[n] >= 'A' && s[n] <= 'Z') || (s[n] >= 'a' && s[n] <= 'z')
+                        || (s[n] >= '0' && s[n] <= '9') || s[n] == '-' || s[n] == '_'))
+        n++;
+      if (n == 11)
+        {
+          memcpy (id, s, 11);
+          id[11] = 0;
+          return 1;
+        }
+    }
+  return 0;
+}
+
+static void play (const yt_item *it);
+
+static void search (void)
+{
+  char *q = field_buf, id[12];
+  while (*q == ' ')
+    q++;
+  if (!*q)
+    return;
+  if (video_id_in (q, id))
+    {
+      /* an address: play that video, and show what's related to it */
+      yt_item it;
+      memset (&it, 0, sizeof it);
+      it.kind = YT_VIDEO;
+      strcpy (it.id, id);
+      go (YT_LIST_RELATED, id, NULL);
+      play (&it);
+      return;
+    }
+  go (YT_LIST_SEARCH, q, q);
+}
+
+/* ---- playing ------------------------------------------------------------ */
+
+/* Wimp_StartTask, with UnixLib's VFP context switched off around it (as
+   riscos-ffmpeg's ffplay does): otherwise VFPSupport may later save it
+   lazily into the new task's memory, which is at the same address. */
+static _kernel_oserror *start_task (const char *cmd)
+{
+#ifdef __arm__
+  _kernel_oserror *err;
+  __asm__ volatile (
+    "mov    r0, #0\n\t"
+    "mov    r1, #0\n\t"
+    "swi    0x78EC3\n\t"          /* XVFPSupport_ChangeContext 0: off */
+    "movvs  r0, #0\n\t"
+    "mov    r4, r0\n\t"           /* the old context */
+    "mov    r0, %1\n\t"
+    "swi    0x600DE\n\t"          /* XWimp_StartTask */
+    "movvs  %0, r0\n\t"
+    "movvc  %0, #0\n\t"
+    "movs   r0, r4\n\t"
+    "mov    r1, #0\n\t"
+    "swine  0x78EC3\n\t"          /* back on */
+    : "=&r" (err) : "r" (cmd) : "r0", "r1", "r2", "r3", "r4", "r14", "cc", "memory");
+  return err;
+#else   /* the tests on Linux (fake RISC OS) */
+  return _swix (Wimp_StartTask, _IN (0), cmd);
+#endif
+}
+
+static void play_done (yt_play *pl, const char *err, void *ctx)
+{
+  char path[256], cmd[320], msg[300];
+  const char *scrap = getenv ("Wimp$ScrapDir");
+  char *json;
+  (void) ctx;
+  play_op = NULL;
+  if (!pl)
+    {
+      set_status ("%s", err);
+      ui_report (err);
+      return;
+    }
+  if (!(json = yt_reel_json (pl, play_id)))
+    {
+      ui_report ("Out of memory");
+      return;
+    }
+  play_file_n = play_file_n % 4 + 1;
+  snprintf (path, sizeof path, "%s.TubePlay%d", scrap && *scrap ? scrap : "<Wimp$ScrapDir>", play_file_n);
+  if (_swix (OS_File, _INR (0, 2) | _INR (4, 5), 10, path, 0xFFF, json, json + strlen (json)))
+    {
+      snprintf (msg, sizeof msg, "Couldn't write %s", path);
+      ui_report (msg);
+      free (json);
+      return;
+    }
+  free (json);
+  if (getenv ("Alias$Reel"))
+    snprintf (cmd, sizeof cmd, "Reel %s", path);
+  else
+    {
+      ui_report ("Reel isn't known yet: open the directory that has !Reel in it "
+                 "(so the Filer sees it), then try again.");
+      set_status ("Reel isn't known yet");
+      return;
+    }
+  if (fail (start_task (cmd)))
+    return;
+  set_status ("Playing %dp%s in Reel", pl->quality, pl->hls_url ? " (live)" : "");
+}
+
+static void play (const yt_item *it)
+{
+  if (it->kind != YT_VIDEO)
+    return;
+  api_cancel (play_op);
+  snprintf (play_id, sizeof play_id, "%s", it->id);
+  play_op = api_play (it->id, quality, play_done, NULL);
+  set_status (play_op ? "Finding the video's streams..." : "Out of memory");
+}
+
+/* ---- menus -------------------------------------------------------------- */
+
+typedef struct { int flags, submenu, icon_flags; int data[3]; } menu_item;
+typedef struct { char title[12]; unsigned char colours[4]; int width, height, gap; menu_item item[6]; } menu_block;
+
+static menu_block quality_menu, bar_menu, tile_menu;
+static enum { M_NONE, M_ICONBAR, M_TILE } menu_open;
+static int menu_tile = -1;
+static char tile_menu_channel[200];
+
+static void menu_init (menu_block *m, const char *title, int width)
+{
+  memset (m, 0, sizeof *m);
+  snprintf (m->title, sizeof m->title, "%s", title);
+  m->colours[0] = 7; m->colours[1] = 2; m->colours[2] = 7; m->colours[3] = 0;
+  m->width = width;
+  m->height = 44;
+  m->gap = 0;
+}
+
+static void menu_add (menu_block *m, int i, const char *text, int submenu, int flags)
+{
+  menu_item *it = &m->item[i];
+  it->flags = flags;
+  it->submenu = submenu ? submenu : -1;
+  it->icon_flags = 0x07000021;                      /* text, filled; black on white */
+  memset (it->data, 0, sizeof it->data);
+  strncpy ((char *) it->data, text, 12);
+}
+
+static void menu_add_ind (menu_block *m, int i, char *text, int size, int flags)
+{
+  menu_item *it = &m->item[i];
+  it->flags = flags;
+  it->submenu = -1;
+  it->icon_flags = 0x07000121;                      /* indirected */
+  it->data[0] = (int) text;
+  it->data[1] = -1;
+  it->data[2] = size;
+}
+
+static void build_quality_menu (void)
+{
+  static const int q[4] = { 360, 480, 720, 1080 };
+  static const char *const names[4] = { "360p", "480p", "720p", "1080p" };
+  menu_init (&quality_menu, "Quality", 200);
+  for (int i = 0; i < 4; i++)
+    menu_add (&quality_menu, i, names[i], 0, (q[i] == quality ? 1 : 0) | (i == 3 ? 0x80 : 0));
+}
+
+static void open_iconbar_menu (int x)
+{
+  build_quality_menu ();
+  menu_init (&bar_menu, APP_NAME, 240);
+  menu_add (&bar_menu, 0, "Search...", 0, 0);
+  menu_add (&bar_menu, 1, "Quality", (int) &quality_menu, 2 /* dotted line */);
+  menu_add (&bar_menu, 2, "Quit", 0, 0x80);
+  menu_open = M_ICONBAR;
+  fail (_swix (Wimp_CreateMenu, _INR (1, 3), &bar_menu, x - 64, 96 + 3 * 44));
+}
+
+static void open_tile_menu (int i, int x, int y)
+{
+  page *p = cur ();
+  const yt_item *it;
+  int n = 0;
+  build_quality_menu ();
+  menu_tile = i;
+  if (p && i >= 0 && i < p->list.n)
+    {
+      it = &p->list.items[i];
+      menu_init (&tile_menu, it->kind == YT_CHANNEL ? "Channel" : "Video", 640);
+      if (it->kind == YT_VIDEO)
+        {
+          menu_add (&tile_menu, n++, "Play", 0, 0);
+          menu_add (&tile_menu, n++, "Related", 0, 0);
+          snprintf (tile_menu_channel, sizeof tile_menu_channel, "Channel: %s", it->channel);
+          menu_add_ind (&tile_menu, n++, tile_menu_channel, sizeof tile_menu_channel, 2);
+          if (!it->channel_id[0])
+            tile_menu.item[n - 1].icon_flags |= 1 << 22;      /* shaded */
+        }
+      else
+        menu_add (&tile_menu, n++, "Open", 0, 2);
+    }
+  else
+    {
+      menu_tile = -1;
+      menu_init (&tile_menu, APP_NAME, 300);
+    }
+  menu_add (&tile_menu, n++, "Back", 0, 0);
+  if (depth <= 1)
+    tile_menu.item[n - 1].icon_flags |= 1 << 22;
+  menu_add (&tile_menu, n++, "Quality", (int) &quality_menu, 0x80);
+  menu_open = M_TILE;
+  fail (_swix (Wimp_CreateMenu, _INR (1, 3), &tile_menu, x - 64, y));
+}
+
+static void open_channel (const yt_item *it)
+{
+  if (it->channel_id[0])
+    go (YT_LIST_CHANNEL, it->channel_id, it->kind == YT_CHANNEL ? it->title : it->channel);
+}
+
+static int menu_selection (const int *sel)
+{
+  int adjust = 0;
+  {
+    int ptr[5];
+    if (!_swix (Wimp_GetPointerInfo, _IN (1), ptr))
+      adjust = ptr[2] & Button_Adjust;
+  }
+  if (menu_open == M_ICONBAR)
+    {
+      if (sel[0] == 0)
+        show_window (1);
+      else if (sel[0] == 1 && sel[1] >= 0)
+        quality = sel[1] == 0 ? 360 : sel[1] == 1 ? 480 : sel[1] == 2 ? 720 : 1080;
+      else if (sel[0] == 2)
+        return 1;
+      if (adjust)
+        {
+          build_quality_menu ();
+          _swix (Wimp_CreateMenu, _INR (1, 3), &bar_menu, 0, 0);
+          return 0;
+        }
+    }
+  else if (menu_open == M_TILE)
+    {
+      page *p = cur ();
+      const yt_item *it = p && menu_tile >= 0 && menu_tile < p->list.n ? &p->list.items[menu_tile] : NULL;
+      int i = sel[0], base = 0;
+      if (it && it->kind == YT_VIDEO)
+        {
+          base = 3;
+          if (i == 0)
+            play (it);
+          else if (i == 1)
+            go (YT_LIST_RELATED, it->id, NULL);
+          else if (i == 2)
+            open_channel (it);
+        }
+      else if (it)
+        {
+          base = 1;
+          if (i == 0)
+            open_channel (it);
+        }
+      if (i == base)
+        go_back ();
+      else if (i == base + 1 && sel[1] >= 0)
+        quality = sel[1] == 0 ? 360 : sel[1] == 1 ? 480 : sel[1] == 2 ? 720 : 1080;
+      if (adjust && i == base + 1)
+        {
+          build_quality_menu ();
+          _swix (Wimp_CreateMenu, _INR (1, 3), &tile_menu, 0, 0);
+          return 0;
+        }
+    }
+  menu_open = M_NONE;
+  return 0;
+}
+
+/* ---- clicks ------------------------------------------------------------- */
+
+/* The tile under screen (x, y), and which part: 0 picture/title, 1 the
+   channel line. -1 for none. */
+static int tile_at (int x, int y, int *part)
+{
+  int b[9], wx, wy, col, row, i, x0, y1;
+  page *p = cur ();
+  b[0] = win;
+  if (!p || _swix (Wimp_GetWindowState, _IN (1), b))
+    return -1;
+  wx = x - (b[1] - b[5]);
+  wy = y - (b[4] - b[6]);
+  if (wy > -TOOLBAR_H - PAD || wx < PAD)
+    return -1;
+  col = (wx - PAD) / TILE_W;
+  row = (-wy - TOOLBAR_H - PAD) / TILE_H;
+  if (col >= cols)
+    return -1;
+  i = row * cols + col;
+  if (i >= tiles (p))
+    return -1;
+  tile_box (i, &x0, &y1);
+  if (wx > x0 + TILE_W - 20 || wy < y1 - TILE_H + 12)
+    return -1;
+  *part = wy < y1 - 20 - THUMB_H - 8 - 2 * LINE_H && wy >= y1 - 20 - THUMB_H - 8 - 3 * LINE_H;
+  return i;
+}
+
+static void click_main (const int *b)
+{
+  int part = 0, i = tile_at (b[0], b[1], &part);
+  page *p = cur ();
+  if (b[2] == Button_Menu)
+    {
+      open_tile_menu (i, b[0], b[1]);
+      return;
+    }
+  if (i < 0 || !p)
+    return;
+  if (i >= p->list.n)
+    {
+      more ();
+      return;
+    }
+  {
+    const yt_item *it = &p->list.items[i];
+    if (it->kind == YT_CHANNEL || (part == 1 && it->channel_id[0]))
+      open_channel (it);
+    else if (b[2] == Button_Select)
+      play (it);
+    else if (b[2] == Button_Adjust)
+      go (YT_LIST_RELATED, it->id, NULL);
+  }
+}
+
+static void click_bar (const int *b)
+{
+  if (b[2] == Button_Menu)
+    {
+      open_tile_menu (-1, b[0], b[1]);
+      return;
+    }
+  if (b[4] == I_BACK)
+    go_back ();
+  else if (b[4] == I_SEARCH)
+    search ();
+}
+
+/* ---- set up, events ----------------------------------------------------- */
+
+static void picture_arrived (const char *url)
+{
+  page *p = cur ();
+  if (!p || !win_open)
+    return;
+  for (int i = 0; i < p->list.n; i++)
+    if (!strcmp (p->list.items[i].thumb_url, url))
+      redraw_tile (i);
+}
+
+static int create_iconbar_icon (void)
+{
+  int b[9];
+  memset (b, 0, sizeof b);
+  b[0] = -1;
+  b[1] = 0; b[2] = 0; b[3] = 68; b[4] = 68;
+  b[5] = 0x301A;
+  memcpy (&b[6], "!tube", 6);
+  return fail (_swix (Wimp_CreateIcon, _INR (0, 1), 0, b));
+}
+
+int ui_init (void)
+{
+  static const int messages[] = { Message_ModeChange, Message_FontChanged, 0 };
+  char err[200];
+  int alphabet = 0;
+  const char *dir = getenv ("Tube$Dir");
+  if (fail (_swix (Wimp_Initialise, _INR (0, 3) | _OUT (1), 380, TASK_WORD, APP_NAME, messages, &task)))
+    return 1;
+  if (transport_check (err, sizeof err))
+    {
+      ui_report (err);
+      return 1;
+    }
+  /* the settings: !Tube's own Config, then the user's in Choices */
+  {
+    char path[300];
+    const char *choices = getenv ("Choices$Write");
+    if (dir)
+      {
+        snprintf (path, sizeof path, "%s.Config", dir);
+        yt_config_load (path);
+      }
+    if (choices)
+      {
+        snprintf (path, sizeof path, "%s.Tube.Config", choices);
+        yt_config_load (path);
+      }
+  }
+  quality = atoi (yt_config_get ("max_quality"));
+  if (quality < 144)
+    quality = 1080;
+  if (!_swix (OS_Byte, _INR (0, 1) | _OUT (1), 71, 127, &alphabet))
+    text_utf8_desktop = alphabet == 111;
+  read_screen ();
+  http_init (&transport_system);
+  thumbs_init (picture_arrived);
+  return create_iconbar_icon () || create_main () || create_bar ();
+}
+
+int ui_busy (void)
+{
+  return http_busy ();
+}
+
+int ui_event (int reason, int *b)
+{
+  switch (reason)
+    {
+    case Null_Reason:
+      http_poll ();
+      break;
+    case Redraw_Window_Request:
+      if (b[0] == win)
+        redraw (b);
+      break;
+    case Open_Window_Request:
+      if (b[0] == win)
+        open_main (b);
+      else
+        _swix (Wimp_OpenWindow, _IN (1), b);
+      break;
+    case Close_Window_Request:
+      if (b[0] == win)
+        {
+          _swix (Wimp_CloseWindow, _IN (1), b);
+          win_open = 0;
+        }
+      break;
+    case Mouse_Click:
+      if (b[3] == -2)
+        {
+          if (b[2] == Button_Menu)
+            open_iconbar_menu (b[0]);
+          else
+            show_window (1);
+        }
+      else if (b[3] == win)
+        click_main (b);
+      else if (b[3] == bar)
+        click_bar (b);
+      break;
+    case Key_Pressed:
+      if (b[0] == bar && b[1] == I_FIELD && b[6] == 13)
+        search ();
+      else if (b[6] == 0x1B && b[0] == bar)
+        ;                                   /* Escape in the box: nothing */
+      else
+        _swix (Wimp_ProcessKey, _IN (0), b[6]);
+      break;
+    case Menu_Selection:
+      return menu_selection (b);
+    case User_Message:
+    case User_Message_Recorded:
+      if (b[4] == Message_Quit)
+        return 1;
+      if (b[4] == Message_ModeChange || b[4] == Message_FontChanged)
+        {
+          read_screen ();
+          wrap_gen++;
+          if (win_open)
+            {
+              set_extent ();
+              redraw_all ();
+            }
+        }
+      break;
+    }
+  return 0;
+}
+
+void ui_close (void)
+{
+  while (depth)
+    free_page (pages[--depth]);
+  api_cancel (play_op);
+  thumbs_free_all ();
+  http_shutdown ();
+  _swix (Wimp_CloseDown, _INR (0, 1), task, TASK_WORD);
+}

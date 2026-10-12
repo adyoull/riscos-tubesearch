@@ -1,0 +1,28 @@
+# Tube's settings. A copy in Choices:Tube.Config (made by you) is read after
+# this one, so settings there win and survive updating !Tube.
+#
+# YouTube changes what its apps send from time to time. If videos stop
+# playing ("Sign in to confirm you're not a bot", or no streams), newer
+# values from yt-dlp (yt_dlp/extractor/youtube/_base.py, the VISIONOS
+# client) or NewPipe can be put here without a new Tube.
+#
+# The tallest video to ask for (lines): 360, 480, 720 or 1080.
+max_quality = 1080
+
+# The client for lists (search, related videos, channels):
+# web_client_version = 2.20260805.01.00
+
+# The client for a video's streams (no JavaScript needed):
+# player_host = youtubei.googleapis.com
+# player_client_name = VISIONOS
+# player_client_version = 1.04
+# player_user_agent = com.google.visionos.youtube/1.04(RealityDevice17,1; U; CPU visionOS 26_6_0 like Mac OS X; GB)
+# player_device_model = RealityDevice17,1
+# player_os_version = 26.6.0.23O770
+
+# What Reel tells the video servers it is:
+# media_user_agent = Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15
+
+# Language and country for results:
+# language = en-GB
+# region = GB

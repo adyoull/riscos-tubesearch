@@ -19,6 +19,7 @@
 #include "http.h"
 #include "text.h"
 #include "thumbs.h"
+#include "proxy.h"
 #include "transport.h"
 #include "ejsupd.h"
 #include "yt.h"
@@ -52,7 +53,7 @@ enum { Button_Adjust = 1, Button_Menu = 2, Button_Select = 4 };
 #define TEXT_W (TILE_W - 40)
 
 /* toolbar icons */
-enum { I_BACK, I_FIELD, I_SEARCH, I_STATUS };
+enum { I_BACK, I_FIELD, I_SEARCH, I_STATUS, I_DATE, I_DATEPOP };
 
 #define MAX_PAGES 24
 
@@ -70,6 +71,7 @@ typedef struct page {
   int text_cap;
   api_op *op;                 /* fetching (the first part or more) */
   int scroll_y;
+  int date;                   /* a search's upload-date filter (YT_DATE_*) */
   char status[200];
 } page;
 
@@ -84,6 +86,8 @@ static int play_answered;                    /* play_done has been called for th
 static char play_id[40];
 static int play_file_n;
 static int quality = 1080;
+static int search_date;                      /* YT_DATE_*: for the next search */
+static char date_buf[16] = "Any time";
 
 static char title_buf[300] = APP_NAME;
 static char field_buf[256];
@@ -448,7 +452,8 @@ static int create_bar (void)
   static char back_text[] = "Back", search_text[] = "Search";
   static char back_valid[] = "R5,3", search_valid[] = "R6,3", field_valid[] = "Pptr_write;R7",
     status_valid[] = "";
-  int b[22 + 4 * 8];
+  static char date_valid[] = "R2", pop_text[] = "", pop_valid[] = "Sgright;R5,3";
+  int b[22 + 6 * 8];
   memset (b, 0, sizeof b);
   b[0] = 0; b[1] = 0; b[2] = 1000; b[3] = TOOLBAR_H;
   b[6] = -1;
@@ -461,12 +466,16 @@ static int create_bar (void)
   b[14] = 0;
   b[15] = 0;
   b[16] = 1;
-  b[21] = 4;
-  /* Back, the search box, Search, the status line */
+  b[21] = 6;
+  /* Back, the search box, Search, the status line; then the upload-date
+     filter (a display field and its pop-up menu button) between Search
+     and the status line */
   icon (&b[22], 12, -72, 136, -12, 0x1700313D, back_text, back_valid, sizeof back_text);
   icon (&b[30], 148, -72, 1060, -12, 0x0700F135, field_buf, field_valid, sizeof field_buf);
   icon (&b[38], 1072, -72, 1232, -12, 0x1700313D, search_text, search_valid, sizeof search_text);
-  icon (&b[46], 1250, -72, 3800, -12, 0x15000131, status_buf, status_valid, sizeof status_buf);
+  icon (&b[46], 1546, -72, 3800, -12, 0x15000131, status_buf, status_valid, sizeof status_buf);
+  icon (&b[54], 1248, -68, 1476, -16, 0x1700313D, date_buf, date_valid, sizeof date_buf);
+  icon (&b[62], 1480, -68, 1528, -16, 0x1700313F, pop_text, pop_valid, sizeof pop_text);
   return fail (_swix (Wimp_CreateWindow, _IN (1) | _OUT (0), b, &bar));
 }
 
@@ -630,11 +639,35 @@ static void list_done (int added, const char *err, void *ctx)
     }
 }
 
+/* The upload-date filter for the next search, shown in the toolbar. */
+static void show_search_date (int date)
+{
+  int b[4] = { bar, I_DATE, 0, 0 };
+  search_date = date >= 0 && date < YT_DATE_COUNT ? date : YT_DATE_ANY;
+  snprintf (date_buf, sizeof date_buf, "%s", yt_date_name (search_date));
+  if (bar != -1)
+    _swix (Wimp_SetIconState, _IN (1), b);
+}
+
+/* http_proxy (and no_proxy) as they are now, which is what Reel will use:
+   read before each thing fetched; when they change, connections kept
+   from before are closed, and a bad value is reported (once). */
+static void check_proxy (void)
+{
+  char err[200];
+  int k = proxy_refresh (NULL, err, sizeof err);
+  if (k)
+    http_close_idle ();
+  if (k < 0)
+    ui_report (err);
+}
+
 /* Shows a new page, fetching its list. */
 static void go (int kind, const char *arg, const char *heading)
 {
   page *p = calloc (1, sizeof *p);
   int b[9];
+  check_proxy ();
   if (!p || !(p->arg = strdup (arg)))
     {
       free (p);
@@ -642,7 +675,15 @@ static void go (int kind, const char *arg, const char *heading)
       return;
     }
   p->kind = kind;
-  p->heading = heading ? strdup (heading) : NULL;
+  p->date = kind == YT_LIST_SEARCH ? search_date : 0;
+  if (heading && p->date)
+    {
+      char h[300];
+      snprintf (h, sizeof h, "%s (%s)", heading, yt_date_name (p->date));
+      p->heading = strdup (h);
+    }
+  else
+    p->heading = heading ? strdup (heading) : NULL;
   /* remember where the old page was scrolled to */
   if (cur ())
     {
@@ -660,7 +701,7 @@ static void go (int kind, const char *arg, const char *heading)
     }
   pages[depth++] = p;
   thumbs_cancel_pending ();
-  p->op = api_list (kind, arg, 0, &p->list, list_done, p);
+  p->op = api_list (kind, arg, 0, p->date, &p->list, list_done, p);
   snprintf (p->status, sizeof p->status, "%s",
             !p->op ? "Out of memory" : kind == YT_LIST_SEARCH ? "Searching..." : "Loading...");
   set_status ("%s", p->status);
@@ -680,13 +721,16 @@ static void go_back (void)
   free_page (pages[--depth]);
   p = cur ();
   thumbs_cancel_pending ();
+  if (p->kind == YT_LIST_SEARCH)
+    show_search_date (p->date);           /* the filter goes with the results shown */
   set_status ("%s", p->status);
   set_title ();
   set_extent ();
   /* a page left before its list arrived: ask again */
   if (!p->list.n && !p->op)
     {
-      p->op = api_list (p->kind, p->arg, 0, &p->list, list_done, p);
+      check_proxy ();
+      p->op = api_list (p->kind, p->arg, 0, p->date, &p->list, list_done, p);
       snprintf (p->status, sizeof p->status, "Loading...");
       set_status ("%s", p->status);
     }
@@ -699,7 +743,8 @@ static void more (void)
   page *p = cur ();
   if (!p || p->op || !p->list.continuation)
     return;
-  p->op = api_list (p->kind, p->list.continuation, 1, &p->list, list_done, p);
+  check_proxy ();
+  p->op = api_list (p->kind, p->list.continuation, 1, p->date, &p->list, list_done, p);
   if (p->op)
     {
       set_status ("Loading more...");
@@ -990,6 +1035,7 @@ static void play (const yt_item *it)
   api_op *op;
   api_cancel (play_op);
   play_op = NULL;
+  check_proxy ();
   snprintf (play_id, sizeof play_id, "%s", it->id);
   set_status ("Finding the video's streams...");
   play_answered = 0;
@@ -1004,8 +1050,8 @@ static void play (const yt_item *it)
 typedef struct { int flags, submenu, icon_flags; int data[3]; } menu_item;
 typedef struct { char title[12]; unsigned char colours[4]; int width, height, gap; menu_item item[6]; } menu_block;
 
-static menu_block quality_menu, bar_menu, tile_menu;
-static enum { M_NONE, M_ICONBAR, M_TILE } menu_open;
+static menu_block quality_menu, bar_menu, tile_menu, date_menu;
+static enum { M_NONE, M_ICONBAR, M_TILE, M_DATE } menu_open;
 static int menu_tile = -1;
 static char tile_menu_channel[200];
 
@@ -1047,6 +1093,40 @@ static void build_quality_menu (void)
   menu_init (&quality_menu, "Quality", 200);
   for (int i = 0; i < 4; i++)
     menu_add (&quality_menu, i, names[i], 0, (q[i] == quality ? 1 : 0) | (i == 3 ? 0x80 : 0));
+}
+
+static void build_date_menu (void)
+{
+  menu_init (&date_menu, "Uploaded", 260);
+  for (int i = 0; i < YT_DATE_COUNT; i++)
+    menu_add (&date_menu, i, yt_date_name (i), 0, (i == search_date ? 1 : 0) | (i == YT_DATE_COUNT - 1 ? 0x80 : 0));
+}
+
+/* The upload-date filter's menu, beside its pop-up button (as RISC OS's
+   pop-up menus open). */
+static void open_date_menu (void)
+{
+  int st[9], ic[10];
+  st[0] = bar;
+  ic[0] = bar; ic[1] = I_DATEPOP;
+  if (_swix (Wimp_GetWindowState, _IN (1), st) || _swix (Wimp_GetIconState, _IN (1), ic))
+    return;
+  build_date_menu ();
+  menu_open = M_DATE;
+  fail (_swix (Wimp_CreateMenu, _INR (1, 3), &date_menu,
+               st[1] - st[5] + ic[4] + 4, st[4] - st[6] + ic[5]));
+}
+
+/* A new upload-date filter: shown in the toolbar, and the search on
+   screen is done again with it (Back returns to the one before). */
+static void set_search_date (int date)
+{
+  page *p = cur ();
+  if (date < 0 || date >= YT_DATE_COUNT)
+    return;
+  show_search_date (date);
+  if (p && p->kind == YT_LIST_SEARCH && p->date != date)
+    go (YT_LIST_SEARCH, p->arg, p->arg);
 }
 
 static void open_iconbar_menu (int x)
@@ -1111,7 +1191,18 @@ static int menu_selection (const int *sel)
     if (!_swix (Wimp_GetPointerInfo, _IN (1), ptr))
       adjust = ptr[2] & Button_Adjust;
   }
-  if (menu_open == M_ICONBAR)
+  if (menu_open == M_DATE)
+    {
+      if (sel[0] >= 0)
+        set_search_date (sel[0]);
+      if (adjust)
+        {
+          build_date_menu ();
+          _swix (Wimp_CreateMenu, _INR (1, 3), &date_menu, 0, 0);
+          return 0;
+        }
+    }
+  else if (menu_open == M_ICONBAR)
     {
       if (sel[0] == 1)
         show_window (1);
@@ -1229,6 +1320,8 @@ static void click_bar (const int *b)
     go_back ();
   else if (b[4] == I_SEARCH)
     search ();
+  else if (b[4] == I_DATE || b[4] == I_DATEPOP)
+    open_date_menu ();
 }
 
 /* ---- set up, events ----------------------------------------------------- */
@@ -1285,6 +1378,11 @@ int ui_init (void)
   quality = atoi (yt_config_get ("max_quality"));
   if (quality < 144)
     quality = 1080;
+  search_date = yt_date_parse (yt_config_get ("search_date"));
+  if (search_date < 0)
+    search_date = YT_DATE_ANY;
+  snprintf (date_buf, sizeof date_buf, "%s", yt_date_name (search_date));
+  check_proxy ();
   if (!_swix (OS_Byte, _INR (0, 1) | _OUT (1), 71, 127, &alphabet))
     text_utf8_desktop = alphabet == 111;
   read_screen ();

@@ -7,7 +7,8 @@ set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
 CLI=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
 W=$(mktemp -d)
-trap 'kill $SRV 2>/dev/null || true; rm -rf "$W"' EXIT
+PRX=
+trap 'kill $SRV $PRX 2>/dev/null || true; rm -rf "$W"' EXIT
 FIX=$HERE/fixtures
 [ -s "$FIX/next.json" ] || { echo "no fixtures: run tests/fetch-fixtures.sh" >&2; exit 1; }
 python3 -I -c "
@@ -124,6 +125,43 @@ check "and afterwards too" "tv_ok '$W/after.json'"
 $CLI_TV update 2> "$W/err"
 check "a bad version isn't taken again" "grep -q 'up to date' '$W/err'"
 check "every TV request as YouTube expects" "python3 -I -c \"
+import json
+bad=[r for r in (json.loads(l) for l in open('$W/log')) if r.get('problems')]
+assert not bad, bad\""
+
+# ---- the upload-date filter ----
+"$CLI" -date week search test > "$W/week" 2> "$W/err" || { cat "$W/err"; fail=1; }
+check "-date week: YouTube's This week filter sent" "python3 -I -c \"
+import json
+r=[x for x in (json.loads(l) for l in open('$W/log')) if x.get('endpoint')=='search'][-1]
+assert r['params']=='EgIIAw==' and r['query']=='test', r\""
+
+# ---- through a web proxy ----
+PPORT=$((PORT + 1))
+python3 -I "$HERE/fake_proxy.py" $PPORT $PORT chris:se@cret "$W/plog" > "$W/prx.out" 2>&1 &
+PRX=$!
+for i in 1 2 3 4 5 6 7 8 9 10; do grep -q ready "$W/prx.out" 2>/dev/null && break; sleep 0.3; done
+pcount() { python3 -I -c "
+import json,sys
+print(sum(1 for l in open('$W/plog') for r in [json.loads(l)] if r['target']==sys.argv[1] and r['auth_ok']))" "$1"; }
+"$CLI" -proxy "http://chris:se%40cret@127.0.0.1:$PPORT/" search test > "$W/psearch" 2> "$W/err" || { cat "$W/err"; fail=1; }
+check "-proxy: the search goes through the proxy, signed in" "grep -q 'through the proxy 127.0.0.1:$PPORT' '$W/err' && [ \$(grep -c '^[A-Za-z0-9_-]\{11\} ' '$W/psearch') -eq 23 ] && [ \$(pcount www.youtube.com:443) -ge 1 ]"
+http_proxy="http://chris:se%40cret@127.0.0.1:$PPORT" "$CLI" play 7PIMiDcwNvc 720 "$W/pplay.json" 2> "$W/err" || { cat "$W/err"; fail=1; }
+check "http_proxy: the player is asked through it too" "grep -q 'itag=136' '$W/pplay.json' && [ \$(pcount youtubei.googleapis.com:443) -eq 1 ]"
+before=$(wc -l < "$W/plog")
+http_proxy="http://chris:se%40cret@127.0.0.1:$PPORT" no_proxy=".youtube.com" "$CLI" search test > /dev/null 2> "$W/err" || { cat "$W/err"; fail=1; }
+check "no_proxy: those hosts directly" "[ \$(wc -l < '$W/plog') -eq $before ]"
+http_proxy="http://chris:wrong@127.0.0.1:$PPORT" "$CLI" search test > /dev/null 2> "$W/err" && fail=1
+check "a wrong password: the proxy's refusal is reported" "grep -q 'refused: 407 Proxy Authentication Required' '$W/err'"
+http_proxy="http://chris:se%40cret@127.0.0.1:$PPORT" "$CLI" -proxy none search test > /dev/null 2> "$W/err" || { cat "$W/err"; fail=1; }
+check "-proxy none: no proxy" "! grep -q 'through the proxy' '$W/err'"
+"$CLI" -proxy "http://127.0.0.1:1" search test > /dev/null 2> "$W/err" && fail=1
+check "a proxy that isn't there: said so" "grep -q '127.0.0.1:1' '$W/err'"
+http_proxy="127.0.0.1:$PPORT" "$CLI" search test > /dev/null 2> "$W/err" && fail=1
+check "http_proxy without http:// (Reel would ignore it): said so" "grep -q 'should start http://' '$W/err'"
+http_proxy="http://chris:se%40cret@127.0.0.1" "$CLI" search test > /dev/null 2> "$W/err" && fail=1
+check "http_proxy without a port (Reel would fail): said so, no password shown" "grep -q 'needs the proxy' '$W/err' && ! grep -q 'cret' '$W/err'"
+check "every request through the proxy as YouTube expects" "python3 -I -c \"
 import json
 bad=[r for r in (json.loads(l) for l in open('$W/log')) if r.get('problems')]
 assert not bad, bad\""

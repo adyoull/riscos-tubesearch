@@ -778,6 +778,13 @@ int http_busy (void)
   return 0;
 }
 
+void http_close_idle (void)
+{
+  for (int i = 0; i < MAX_LANES; i++)
+    if (lanes[i].state == L_IDLE && !lanes[i].cur)
+      close_lane (&lanes[i]);
+}
+
 void http_shutdown (void)
 {
   for (int i = 0; i < MAX_LANES; i++)

@@ -29,8 +29,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <signal.h>
 #include <sys/stat.h>
 #include "api.h"
+#include "proxy.h"
 #include "ejsupd.h"
 #include "http.h"
 #include "solvejob.h"
@@ -116,6 +118,7 @@ static void print_list (const yt_list *l, int from)
 static int usage (void)
 {
   fprintf (stderr, "usage: tscli [-more N] [-dump DIR] [-config FILE] [-client C] [-ejs DIR] [-state DIR] [-work DIR]\n"
+                   "             [-date any|today|week|month|year] [-proxy URL|none]\n"
                    "             search WORDS... | related ID | channel ID | play ID [LINES] [FILE]\n"
                    "             | update | [-wimp] solve JOB ANSWER\n");
   return 2;
@@ -206,8 +209,12 @@ int main (int argc, char **argv)
 {
   char err[200], query[512];
   const char *ejs_dir = NULL, *state_dir = NULL, *work = NULL;
-  int more = 0, a = 1, wimp = 0;
+  int more = 0, a = 1, wimp = 0, date = -1;
+  const char *proxy_override = NULL;
   srand ((unsigned) time (NULL));
+#ifndef __riscos
+  signal (SIGPIPE, SIG_IGN);           /* a connection closed under us is an error, not the end */
+#endif
   while (a < argc && argv[a][0] == '-')
     {
       if (!strcmp (argv[a], "-wimp"))
@@ -235,6 +242,13 @@ int main (int argc, char **argv)
         state_dir = argv[a + 1];
       else if (!strcmp (argv[a], "-work"))
         work = argv[a + 1];
+      else if (!strcmp (argv[a], "-date"))
+        {
+          if ((date = yt_date_parse (argv[a + 1])) < 0)
+            return usage ();
+        }
+      else if (!strcmp (argv[a], "-proxy"))
+        proxy_override = argv[a + 1];
       else
         return usage ();
       a += 2;
@@ -265,6 +279,15 @@ int main (int argc, char **argv)
       return 1;
     }
   http_init (&transport_system);
+  if (proxy_refresh (proxy_override, err, sizeof err) < 0)
+    {
+      fprintf (stderr, "tscli: %s\n", err);
+      return 1;
+    }
+  if (*proxy_name ())
+    fprintf (stderr, "tscli: through the proxy %s\n", proxy_name ());
+  if (date < 0)
+    date = yt_date_parse (yt_config_get ("search_date"));
   default_dirs (work);
 #ifdef __riscos
   {
@@ -351,7 +374,7 @@ int main (int argc, char **argv)
             strcat (query, " ");
           strcat (query, argv[i]);
         }
-      if (!api_list (kind, query, 0, &l, list_done, NULL))
+      if (!api_list (kind, query, 0, date < 0 ? 0 : date, &l, list_done, NULL))
         return 1;
       wait_done ();
       print_list (&l, 0);
@@ -360,7 +383,7 @@ int main (int argc, char **argv)
           int from = l.n;
           char *tok = strdup (l.continuation);
           printf ("-- more\n");
-          if (!api_list (kind, tok, 1, &l, list_done, NULL))
+          if (!api_list (kind, tok, 1, 0, &l, list_done, NULL))
             failed = 1;
           else
             wait_done ();

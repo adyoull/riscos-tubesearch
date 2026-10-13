@@ -14,21 +14,21 @@ RCD_DIR ?= ../riscos-crossdev
 include $(RCD_DIR)/riscos.mk
 .DEFAULT_GOAL := all
 
-VERSION := 0.2.0-rc2
-DATE := 12 Oct 2026
+VERSION := 0.2.0-rc3
+DATE := 13 Oct 2026
 VERDEFS := -DTUBE_VERSION='"$(VERSION)"' -DTUBE_DATE='"$(DATE)"'
 OUT := out
 EJS_VERSION := 0.8.0
 EJS := ejs/$(EJS_VERSION)
 
-CORE := src/api.c src/http.c src/yt.c src/json.c src/text.c src/solvejob.c src/ejsupd.c src/sha3.c
-CORE_H := src/api.h src/http.h src/yt.h src/json.h src/text.h src/transport.h src/solvejob.h src/ejsupd.h src/sha3.h
+CORE := src/api.c src/http.c src/yt.c src/json.c src/text.c src/solvejob.c src/ejsupd.c src/sha3.c src/proxy.c
+CORE_H := src/api.h src/http.h src/yt.h src/json.h src/text.h src/transport.h src/solvejob.h src/ejsupd.h src/sha3.h src/proxy.h
 SOLVER := src/solverun.c src/jsolve.c
 QJS_DIR := third_party/quickjs
 QJS_SRC := $(QJS_DIR)/quickjs.c $(QJS_DIR)/libregexp.c $(QJS_DIR)/libunicode.c $(QJS_DIR)/cutils.c $(QJS_DIR)/dtoa.c
 QJS_DEFS := -DCONFIG_VERSION='"$(shell cat $(QJS_DIR)/VERSION)"' -I$(QJS_DIR)
-APP_SRC := src/main.c src/ui.c src/thumbs.c src/transport_riscos.c $(CORE)
-CLI_SRC := src/tscli.c src/transport_riscos.c $(CORE) $(SOLVER)
+APP_SRC := src/main.c src/ui.c src/thumbs.c src/transport_riscos.c src/proxy_tunnel.c $(CORE)
+CLI_SRC := src/tscli.c src/transport_riscos.c src/proxy_tunnel.c $(CORE) $(SOLVER)
 WARN := -Wall -Wextra -Wno-unused-parameter
 
 all: $(OUT)/TubeSearch-$(VERSION).zip
@@ -104,6 +104,10 @@ $(OUT)/test_http: tests/test_http.c src/http.c src/http.h
 	@mkdir -p $(OUT)
 	$(CC) $(HOST_CFLAGS) -o $@ tests/test_http.c src/http.c
 
+$(OUT)/test_proxy: tests/test_proxy.c src/proxy.c src/proxy_tunnel.c src/proxy.h
+	@mkdir -p $(OUT)
+	$(CC) $(HOST_CFLAGS) -o $@ tests/test_proxy.c src/proxy.c src/proxy_tunnel.c
+
 $(OUT)/test_sha3: tests/test_sha3.c src/sha3.c src/sha3.h
 	@mkdir -p $(OUT)
 	$(CC) $(HOST_CFLAGS) -o $@ tests/test_sha3.c src/sha3.c
@@ -118,14 +122,15 @@ $(OUT)/test_jsolve: tests/test_jsolve.c src/jsolve.c src/json.c src/jsolve.h $(Q
 	@mkdir -p $(OUT)
 	$(CC) -std=gnu99 $(WARN) -g -O1 -Isrc -I$(QJS_DIR) -o $@ tests/test_jsolve.c src/jsolve.c src/json.c $(QJS_HOST) -lm -lpthread
 
-$(OUT)/tscli-linux: src/tscli.c src/transport_openssl.c $(CORE) $(SOLVER) $(CORE_H) src/jsolve.h $(QJS_HOST)
+$(OUT)/tscli-linux: src/tscli.c src/transport_openssl.c src/proxy_tunnel.c $(CORE) $(SOLVER) $(CORE_H) src/jsolve.h $(QJS_HOST)
 	@mkdir -p $(OUT)
-	$(CC) -std=gnu99 $(WARN) -g -O1 -Isrc -I$(QJS_DIR) -o $@ src/tscli.c src/transport_openssl.c $(CORE) $(SOLVER) \
+	$(CC) -std=gnu99 $(WARN) -g -O1 -Isrc -I$(QJS_DIR) -o $@ src/tscli.c src/transport_openssl.c src/proxy_tunnel.c $(CORE) $(SOLVER) \
 	  $(QJS_HOST) -lssl -lcrypto -lm -lpthread
 
-test-host: $(OUT)/test_yt $(OUT)/test_http $(OUT)/test_sha3 fixtures
+test-host: $(OUT)/test_yt $(OUT)/test_http $(OUT)/test_proxy $(OUT)/test_sha3 fixtures
 	$(OUT)/test_yt $(FIX)
 	$(OUT)/test_http
+	$(OUT)/test_proxy
 	$(OUT)/test_sha3 tests/sha3-vectors.txt ejs
 
 # yt-dlp's solver on a real player, in QuickJS: node's answers

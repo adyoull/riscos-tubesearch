@@ -24,7 +24,7 @@ enum { P_PLAYER, P_IFRAME, P_PLAYERJS, P_TV, P_SOLVE };
 
 struct api_op {
   api_op *next;               /* while waiting for the visitor ID */
-  int type, kind, more, maxq;
+  int type, kind, more, maxq, date;
   char *arg;
   yt_list *list;
   api_list_cb list_cb;
@@ -427,7 +427,7 @@ static int send_op (api_op *op)
   else if (op->more)
     q = yt_req_more (op->kind, op->arg);
   else if (op->kind == YT_LIST_SEARCH)
-    q = yt_req_search (op->arg);
+    q = yt_req_search (op->arg, op->date);
   else if (op->kind == YT_LIST_RELATED)
     q = yt_req_related (op->arg);
   else
@@ -507,7 +507,7 @@ static api_op *start (api_op *op)
   return op;
 }
 
-api_op *api_list (int kind, const char *arg, int more, yt_list *list, api_list_cb cb, void *ctx)
+api_op *api_list (int kind, const char *arg, int more, int date, yt_list *list, api_list_cb cb, void *ctx)
 {
   api_op *op = calloc (1, sizeof *op);
   if (!op || !(op->arg = strdup (arg)))
@@ -518,6 +518,7 @@ api_op *api_list (int kind, const char *arg, int more, yt_list *list, api_list_c
   op->type = OP_LIST;
   op->kind = kind;
   op->more = more;
+  op->date = date;
   op->list = list;
   op->list_cb = cb;
   op->ctx = ctx;

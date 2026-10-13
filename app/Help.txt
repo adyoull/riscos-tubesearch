@@ -32,6 +32,11 @@ In the window:
   Back                  the page before (up to 24 are kept)
   Menu                  Play, Related, Channel, Back, and Quality
 
+Beside Search, the Uploaded filter (click it, or its menu button) limits
+searches to videos uploaded Today, This week, This month or This year, or
+Any time. Changing it searches again with the same words; Back returns to
+the results before. Config's search_date sets where it starts.
+
 Menu on the icon bar icon has Info (the version), Search..., Quality
 and Quit.
 
@@ -68,6 +73,34 @@ checking it against the hashes in that file. If a new version doesn't
 work, TubeSearch goes back to its own copy. ejs_update = never in Config
 turns this off.
 
+Through a proxy
+---------------
+On some connections (mobile broadband, shared addresses) YouTube often
+asks you to sign in to prove you're not a bot. Going through a web proxy
+elsewhere (one that accepts CONNECT, such as Squid or Tinyproxy on a
+server of your own) makes YouTube see that network instead.
+
+Set the http_proxy variable, in lower case, with http:// and the port;
+the best place is your boot sequence (PreDesk), or type it before
+playing anything:
+  *Set http_proxy http://host:port/
+  *Set http_proxy http://user:password@host:port/
+  *Unset http_proxy                   (no proxy again)
+In a password, write @ as %40, : as %3A, / as %2F, | as %7C and < as
+%3C (*Set changes | and < itself).
+
+TubeSearch and Reel (through FFmpeg) both read it, and TubeSearch reads it
+the same way Reel does, so they always agree. They must: YouTube's video
+addresses only work from the connection that asked for them. TubeSearch
+reads it again before each search or video, as Reel does each time it
+starts. A value Reel would ignore (no http://, no port) is reported, and
+then neither uses a proxy. If the proxy refuses or can't be reached, the
+status line says so.
+
+Hosts named in no_proxy (*Set no_proxy name,name...) are reached
+directly. Don't name youtube.com or googlevideo.com there unless you name
+both: the video addresses come from one and play from the other.
+
 When it stops working
 ---------------------
 YouTube changes what it expects from its apps every few months. TubeSearch
@@ -92,6 +125,8 @@ and find faults (and the JavaScript helper):
   tscli -config <file> ...      reads settings as Config does
   tscli -client tv play <ID>    the TV app (and the solver) only
   tscli update                  checks for newer solver scripts now
+  tscli -date week search ...   search with the Uploaded filter
+  tscli -proxy <URL>|none ...   a proxy instead of http_proxy
 
 Licence
 -------

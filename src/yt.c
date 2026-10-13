@@ -31,6 +31,7 @@ static setting settings[] = {
   { "consent_cookie", "SOCS=CAE=", NULL },
   { "channel_videos_params", "EgZ2aWRlb3PyBgQKAjoA", NULL },
   { "max_quality", "1080", NULL },
+  { "search_date", "any", NULL },             /* any, today, week, month, year */
   /* the fallback when the player client gives nothing playable: yt-dlp
      2026-10-10's default client, tv_samsung (needs the player's JavaScript) */
   { "stream_client", "auto", NULL },          /* auto (player, then tv), player, tv */
@@ -290,12 +291,48 @@ yt_req *yt_req_visitor (void)
   return new_req (CFG ("web_host"), "visitor_id", sb_done (&b), web_headers ());
 }
 
-yt_req *yt_req_search (const char *query)
+static const struct { const char *word, *name, *params; } dates[YT_DATE_COUNT] = {
+  { "any", "Any time", "" },
+  { "today", "Today", "EgIIAg==" },
+  { "week", "This week", "EgIIAw==" },
+  { "month", "This month", "EgIIBA==" },
+  { "year", "This year", "EgIIBQ==" },
+};
+
+const char *yt_date_params (int date)
+{
+  return date > 0 && date < YT_DATE_COUNT ? dates[date].params : "";
+}
+
+const char *yt_date_name (int date)
+{
+  return dates[date > 0 && date < YT_DATE_COUNT ? date : 0].name;
+}
+
+const char *yt_date_word (int date)
+{
+  return dates[date > 0 && date < YT_DATE_COUNT ? date : 0].word;
+}
+
+int yt_date_parse (const char *word)
+{
+  for (int i = 0; i < YT_DATE_COUNT; i++)
+    if (word && !strcmp (word, dates[i].word))
+      return i;
+  return -1;
+}
+
+yt_req *yt_req_search (const char *query, int date)
 {
   sb b = { 0 };
   web_context (&b, 0);
   sb_str (&b, ",\"query\":");
   sb_quote (&b, query);
+  if (*yt_date_params (date))
+    {
+      sb_str (&b, ",\"params\":");
+      sb_quote (&b, yt_date_params (date));
+    }
   sb_str (&b, "}");
   return new_req (CFG ("web_host"), "search", sb_done (&b), web_headers ());
 }

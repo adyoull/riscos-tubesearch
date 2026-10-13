@@ -15,9 +15,10 @@ typedef void (*api_list_cb) (int added, const char *err, void *ctx);
 typedef void (*api_play_cb) (yt_play *p, const char *err, void *ctx);
 
 /* kind: YT_LIST_*; arg: the query, video ID or channel ID; more: arg is a
-   continuation token instead. Items are added to list, which must stay
-   until the callback (or api_cancel). */
-api_op *api_list (int kind, const char *arg, int more, yt_list *list, api_list_cb cb, void *ctx);
+   continuation token instead (which carries the search's filter); date:
+   a search's upload-date filter, YT_DATE_*. Items are added to list, which
+   must stay until the callback (or api_cancel). */
+api_op *api_list (int kind, const char *arg, int more, int date, yt_list *list, api_list_cb cb, void *ctx);
 /* (Either may call cb before returning, and then returns NULL.) */
 api_op *api_play (const char *video_id, int maxq, api_play_cb cb, void *ctx);
 

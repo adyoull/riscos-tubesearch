@@ -27,6 +27,7 @@
 #include <kernel.h>
 #include "http.h"
 #include "transport.h"
+#include "proxy.h"
 
 /* UnixLib: the RISC OS socket handle behind a file descriptor */
 extern int __get_ro_socket (int sockfd);
@@ -52,17 +53,18 @@ extern int __get_ro_socket (int sockfd);
 #define DCI4_EINPROGRESS 36
 #define DCI4_ENOTCONN    57
 
-enum { S_TCP, S_HANDSHAKE, S_READY };
+enum { S_TCP, S_TUNNEL, S_HANDSHAKE, S_READY };
 
 typedef struct {
   int fd;
   int ssl;                    /* AcornSSL handle, 0 = none yet */
   int state;
   char host[96];
+  proxy_tunnel *tunnel;       /* through a proxy: the CONNECT, until it's answered */
 } conn;
 
 /* A few addresses remembered: the Resolver is asked once per host. */
-static struct { char host[96]; struct in_addr addr; } dns[8];
+static struct { char host[128]; struct in_addr addr; } dns[8];
 static int dns_next;
 
 static int dci4_errno (const _kernel_oserror *e)
@@ -97,15 +99,24 @@ static void *t_open (const char *host, int port, int tls, char *err, size_t errl
   struct sockaddr_in sa;
   conn *c;
   int one = 1;
+  const proxy_cfg *px = proxy_for (host);
   (void) tls;                                   /* (always TLS) */
   memset (&sa, 0, sizeof sa);
   sa.sin_family = AF_INET;
-  sa.sin_port = htons ((unsigned short) port);
-  if (lookup (host, &sa.sin_addr, err, errlen))
+  sa.sin_port = htons ((unsigned short) (px ? px->port : port));
+  if (lookup (px ? px->host : host, &sa.sin_addr, err, errlen))
     return NULL;
-  if (!(c = calloc (1, sizeof *c)))
+  if (!(c = calloc (1, sizeof *c)) || (px && !(c->tunnel = malloc (sizeof *c->tunnel))))
     {
+      free (c);
       snprintf (err, errlen, "Out of memory");
+      return NULL;
+    }
+  if (px && proxy_tunnel_init (c->tunnel, px, host, port))
+    {
+      snprintf (err, errlen, "The request for the proxy %s is too long", proxy_name ());
+      free (c->tunnel);
+      free (c);
       return NULL;
     }
   snprintf (c->host, sizeof c->host, "%s", host);
@@ -113,14 +124,16 @@ static void *t_open (const char *host, int port, int tls, char *err, size_t errl
   if (c->fd < 0)
     {
       snprintf (err, errlen, "Can't make a socket: %s", strerror (errno));
+      free (c->tunnel);
       free (c);
       return NULL;
     }
   ioctl (c->fd, FIONBIO, &one);
   if (connect (c->fd, (struct sockaddr *) &sa, sizeof sa) < 0 && errno != EINPROGRESS && errno != EALREADY)
     {
-      snprintf (err, errlen, "Can't connect to %s: %s", host, strerror (errno));
+      snprintf (err, errlen, "Can't connect to %s: %s", px ? proxy_name () : host, strerror (errno));
       close (c->fd);
+      free (c->tunnel);
       free (c);
       return NULL;
     }
@@ -192,9 +205,21 @@ static int t_ready (void *p, char *err, size_t errlen)
         return 0;
       if (getsockopt (c->fd, SOL_SOCKET, SO_ERROR, &soerr, &sl) == 0 && soerr)
         {
-          snprintf (err, errlen, "Can't connect to %s: %s", c->host, strerror (soerr));
+          snprintf (err, errlen, "Can't connect to %s: %s", c->tunnel ? proxy_name () : c->host,
+                    strerror (soerr));
           return -1;
         }
+      c->state = c->tunnel ? S_TUNNEL : S_HANDSHAKE;
+      if (!c->tunnel && start_tls (c, err, errlen))
+        return -1;
+    }
+  if (c->state == S_TUNNEL)
+    {
+      int k = proxy_tunnel_step (c->tunnel, c->fd, err, errlen);
+      if (k <= 0)
+        return k;
+      free (c->tunnel);
+      c->tunnel = NULL;
       if (start_tls (c, err, errlen))
         return -1;
     }
@@ -257,6 +282,7 @@ static void t_close (void *p)
       _kernel_swi (XAcornSSL_Close, &r, &r);    /* close_notify; the socket stays ours */
     }
   close (c->fd);
+  free (c->tunnel);
   free (c);
 }
 

@@ -37,7 +37,16 @@ typedef struct yt_req {
 } yt_req;
 
 yt_req *yt_req_visitor (void);
-yt_req *yt_req_search (const char *query);
+/* date: YT_DATE_* (YouTube's "Upload date" filter). */
+yt_req *yt_req_search (const char *query, int date);
+
+/* The upload-date filter: YouTube's search params ({2: {1: date}} in
+   protobuf, base64; the values Invidious uses). */
+enum { YT_DATE_ANY, YT_DATE_TODAY, YT_DATE_WEEK, YT_DATE_MONTH, YT_DATE_YEAR, YT_DATE_COUNT };
+const char *yt_date_params (int date);       /* "" for any */
+const char *yt_date_name (int date);         /* "Any time", "Today", "This week"... */
+const char *yt_date_word (int date);         /* "any", "today", "week", "month", "year" */
+int yt_date_parse (const char *word);        /* YT_DATE_*, or -1 */
 yt_req *yt_req_related (const char *video_id);
 yt_req *yt_req_channel (const char *channel_id);
 yt_req *yt_req_player (const char *video_id);

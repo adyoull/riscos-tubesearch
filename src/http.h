@@ -38,6 +38,7 @@ typedef void (*http_done_fn) (http_req *r, void *ctx);
 
 void http_init (const http_transport *t);
 void http_shutdown (void);                   /* closes everything; no callbacks */
+void http_close_idle (void);                 /* closes kept-alive connections (the route changed) */
 
 /* Queues a request to https://host/path. headers: extra header lines
    ("Name: value\r\n"...), or NULL. body (POST) is copied. tag groups

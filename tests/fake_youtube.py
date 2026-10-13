@@ -123,7 +123,8 @@ class H(BaseHTTPRequestHandler):
         if ep != 'visitor_id' and client.get('visitorData') != VISITOR:
             problems.append('no visitorData')
         self.record({'method': 'POST', 'endpoint': 'player-tv' if tv else ep, 'host': host, 'problems': problems,
-                     'continuation': 'continuation' in body, 'query': body.get('query')})
+                     'continuation': 'continuation' in body, 'query': body.get('query'),
+                     'params': body.get('params')})
         if problems:
             self.send_body(400, json.dumps({'error': {'code': 400, 'message': '; '.join(problems)}}).encode())
             return

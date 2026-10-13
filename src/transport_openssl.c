@@ -18,11 +18,13 @@
 #include <openssl/err.h>
 #include "http.h"
 #include "transport.h"
+#include "proxy.h"
 
 typedef struct {
   int fd;
   SSL *ssl;
   int connected;
+  proxy_tunnel *tunnel;
 } conn;
 
 static SSL_CTX *ctx;
@@ -34,6 +36,7 @@ static void *t_open (const char *host, int port, int tls, char *err, size_t errl
   const char *chost = host, *redirect = getenv ("TUBE_CONNECT");
   conn *c;
   int rc;
+  const proxy_cfg *px = proxy_for (host);
   (void) tls;
   if (!ctx)
     {
@@ -52,7 +55,12 @@ static void *t_open (const char *host, int port, int tls, char *err, size_t errl
         }
     }
   snprintf (portstr, sizeof portstr, "%d", port);
-  if (redirect && *redirect)
+  if (px)
+    {
+      chost = px->host;
+      snprintf (portstr, sizeof portstr, "%d", px->port);
+    }
+  else if (redirect && *redirect)
     {
       const char *colon = strrchr (redirect, ':');
       snprintf (hostbuf, sizeof hostbuf, "%.*s", colon ? (int) (colon - redirect) : (int) strlen (redirect), redirect);
@@ -69,20 +77,31 @@ static void *t_open (const char *host, int port, int tls, char *err, size_t errl
       return NULL;
     }
   c = calloc (1, sizeof *c);
+  if (!c || (px && (!(c->tunnel = malloc (sizeof *c->tunnel)) || proxy_tunnel_init (c->tunnel, px, host, port))))
+    {
+      snprintf (err, errlen, c ? "the request for the proxy is too long" : "out of memory");
+      if (c)
+        free (c->tunnel);
+      free (c);
+      freeaddrinfo (ai);
+      return NULL;
+    }
   c->fd = socket (ai->ai_family, SOCK_STREAM, 0);
   if (c->fd < 0)
     {
       snprintf (err, errlen, "socket: %s", strerror (errno));
       freeaddrinfo (ai);
+      free (c->tunnel);
       free (c);
       return NULL;
     }
   fcntl (c->fd, F_SETFL, fcntl (c->fd, F_GETFL) | O_NONBLOCK);
   if (connect (c->fd, ai->ai_addr, ai->ai_addrlen) < 0 && errno != EINPROGRESS)
     {
-      snprintf (err, errlen, "can't connect to %s: %s", host, strerror (errno));
+      snprintf (err, errlen, "can't connect to %s: %s", px ? proxy_name () : host, strerror (errno));
       freeaddrinfo (ai);
       close (c->fd);
+      free (c->tunnel);
       free (c);
       return NULL;
     }
@@ -117,6 +136,14 @@ static int t_ready (void *p, char *err, size_t errlen)
           return -1;
         }
       c->connected = 1;
+    }
+  if (c->tunnel)
+    {
+      int t = proxy_tunnel_step (c->tunnel, c->fd, err, errlen);
+      if (t <= 0)
+        return t;
+      free (c->tunnel);
+      c->tunnel = NULL;
     }
   k = SSL_do_handshake (c->ssl);
   if (k == 1)
@@ -168,6 +195,7 @@ static void t_close (void *p)
   conn *c = p;
   SSL_free (c->ssl);
   close (c->fd);
+  free (c->tunnel);
   free (c);
 }
 

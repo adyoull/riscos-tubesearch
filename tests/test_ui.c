@@ -18,6 +18,7 @@
 #include "../src/ui.h"
 #include "../src/http.h"
 #include "../src/transport.h"
+#include "../src/yt.h"
 
 static const char *fixdir;
 static char scrap[300];
@@ -38,6 +39,8 @@ static char report[256], started[512], saved_path[256];
 static char *saved_data;
 static int sprite_outputs, sprite_plots, jpeg_plots, menus_made;
 static void *last_menu;
+static char last_search[8192];             /* the body of the newest search request */
+static int search_requests;
 
 static const _kernel_oserror err_bad = { 1, "Bad" };
 
@@ -129,6 +132,12 @@ static const _kernel_oserror *wimp (int swi, int r[10])
       return NULL;
     case Wimp_ForceRedraw: forced++; return NULL;
     case Wimp_SetIconState: return NULL;
+    case Wimp_GetIconState:
+      {
+        int *b = (int *) r[1];
+        memcpy (&b[2], &wins[b[0]].block[22 + 8 * b[1]], 8 * sizeof (int));
+        return NULL;
+      }
     case Wimp_SetCaretPosition: carets++; return NULL;
     case Wimp_ProcessKey: return NULL;
     case Wimp_CloseDown: return NULL;
@@ -252,7 +261,7 @@ static const _kernel_oserror *os (int swi, int r[10])
 static void install (void)
 {
   static const int w[] = { Wimp_SendMessage, Wimp_Initialise, Wimp_CreateIcon, Wimp_CreateWindow, Wimp_OpenWindow,
-    Wimp_GetWindowState, Wimp_CloseWindow, Wimp_SetExtent, Wimp_ForceRedraw, Wimp_SetIconState,
+    Wimp_GetWindowState, Wimp_CloseWindow, Wimp_SetExtent, Wimp_ForceRedraw, Wimp_SetIconState, Wimp_GetIconState,
     Wimp_SetCaretPosition, Wimp_ProcessKey, Wimp_CloseDown, Wimp_RedrawWindow, Wimp_GetRectangle,
     Wimp_TextOp, Wimp_CreateMenu, Wimp_GetPointerInfo, Wimp_ReportError, Wimp_StartTask, 0 };
   static const int o[] = { OS_ReadModeVariable, OS_Byte, OS_Plot, ColourTrans_SetGCOL, OS_File,
@@ -327,7 +336,7 @@ static void answer (fconn *c, const char *req)
       api_requests++;
       if (strstr (req, "/visitor_id"))
         body = load ("visitor.json", &len);
-      else if (strstr (req, "/search"))
+      else if (strstr (req, "/search") && (search_requests++, snprintf (last_search, sizeof last_search, "%s", json)))
         body = load (strstr (json, "\"continuation\"") ? "search_2.json" : "search_1.json", &len);
       else if (strstr (req, "/next"))
         body = load ("next.json", &len);
@@ -730,6 +739,80 @@ int main (int argc, char **argv)
     pump ();
     yt_config_set ("stream_client", "auto");
     rename (q, p);
+  }
+
+  /* the upload-date filter: its pop-up menu, a search done again with it,
+     Back to the one before, and later searches keeping it */
+  {
+    const int *bar = wins[2].block;
+    const char *date_icon = (const char *) bar[22 + 8 * 4 + 5];
+    const int *m;
+    int sel[4] = { 2, -1, -1, -1 };              /* Any time, Today, This week */
+    int before;
+    CHECK (bar[21] == 6, "the toolbar has the date filter's two icons");
+    CHECK (!strcmp (date_icon, "Any time"), "it starts at Any time");
+    CHECK (bar[22 + 8 * 5 + 4] & 2 && strstr ((const char *) bar[22 + 8 * 5 + 6], "Sgright"),
+           "a pop-up menu button");
+    type_and_search ("test");
+    pump ();
+    CHECK (!strstr (last_search, "\"params\""), "Any time: no filter sent");
+    menus_made = 0;
+    click (2, 5, 0, 0, 4);
+    m = (const int *) last_menu;
+    CHECK (menus_made == 1 && m && !strcmp ((const char *) m, "Uploaded"), "the Uploaded menu opens");
+    CHECK (m && !strcmp ((const char *) &m[7 + 2 * 6 + 3], "This week") && (m[7] & 1) && !(m[7 + 2 * 6] & 1),
+           "Any time is ticked");
+    CHECK (m && !strcmp ((const char *) &m[7 + 4 * 6 + 3], "This year") && (m[7 + 4 * 6] & 0x80), "five choices");
+    before = search_requests;
+    ui_event (9, sel);
+    pump ();
+    CHECK (search_requests == before + 1 && strstr (last_search, "\"params\":\"EgIIAw==\""),
+           "the search again, for this week");
+    CHECK (strstr (last_search, "\"query\":\"test\"") != NULL, "the same words");
+    CHECK (!strcmp (date_icon, "This week"), "the toolbar shows it");
+    CHECK (!strcmp (title (), "TubeSearch: test (This week)"), "and the title");
+    click (2, 4, 0, 0, 4);                       /* the display field opens the menu too */
+    m = (const int *) last_menu;
+    CHECK (m && (m[7 + 2 * 6] & 1) && !(m[7] & 1), "This week is ticked now");
+    before = search_requests;
+    click (2, 0, 0, 0, 4);
+    CHECK (!strcmp (title (), "TubeSearch: test"), "Back: the unfiltered search");
+    CHECK (search_requests == before, "not asked again");
+    CHECK (!strcmp (date_icon, "Any time"), "and the toolbar shows its filter");
+    click (2, 5, 0, 0, 4);
+    ui_event (9, sel);                           /* This week again */
+    pump ();
+    CHECK (search_requests == before + 1 && strstr (last_search, "EgIIAw=="), "This week again");
+    type_and_search ("cats");
+    pump ();
+    CHECK (strstr (last_search, "\"query\":\"cats\"") && strstr (last_search, "EgIIAw=="),
+           "a new search keeps the filter");
+    click_tile (24, 100, 100, 4);                /* More: the continuation carries the filter */
+    pump ();
+    CHECK (strstr (last_search, "\"continuation\"") && !strstr (last_search, "\"params\""),
+           "More sends YouTube's continuation, not the filter again");
+    sel[0] = 4;
+    click (2, 5, 0, 0, 4);
+    ui_event (9, sel);
+    pump ();
+    CHECK (strstr (last_search, "EgIIBQ==") && !strcmp (date_icon, "This year"), "This year");
+    sel[0] = 0;
+    click (2, 5, 0, 0, 4);
+    ui_event (9, sel);
+    pump ();
+    CHECK (!strstr (last_search, "\"params\"") && !strcmp (date_icon, "Any time"), "back to Any time");
+    /* a related page isn't searched again when the filter changes */
+    click_tile (0, 100, 100, 1);
+    pump ();
+    before = search_requests;
+    sel[0] = 3;
+    click (2, 5, 0, 0, 4);
+    ui_event (9, sel);
+    pump ();
+    CHECK (search_requests == before && !strcmp (date_icon, "This month"), "related: just the setting");
+    sel[0] = 0;
+    click (2, 5, 0, 0, 4);
+    ui_event (9, sel);
   }
 
   /* Reel not known: said so, nothing started */

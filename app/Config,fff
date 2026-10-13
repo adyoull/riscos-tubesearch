@@ -9,6 +9,13 @@
 # The tallest video to ask for (lines): 360, 480, 720 or 1080.
 max_quality = 1080
 
+# The upload-date filter searches start with (the menu beside Search
+# changes it): any, today, week, month or year.
+search_date = any
+
+# A web proxy isn't set here but with the http_proxy variable, which Reel
+# reads too (they must agree; see !Help, "Through a proxy").
+
 # The client for lists (search, related videos, channels):
 # web_client_version = 2.20260805.01.00
 

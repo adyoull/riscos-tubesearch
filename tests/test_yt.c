@@ -100,7 +100,7 @@ static void test_text (void)
 static void test_requests (void)
 {
   char err[96];
-  yt_req *r = yt_req_search ("cats \"and\" dogs");
+  yt_req *r = yt_req_search ("cats \"and\" dogs", YT_DATE_ANY);
   CHECK (r && !strcmp (r->host, "www.youtube.com") && !strcmp (r->path, "/youtubei/v1/search?prettyPrint=false"));
   if (r)
     {
@@ -108,9 +108,38 @@ static void test_requests (void)
       CHECK (d && !strcmp (j_pstr (json_root (d), "query"), "cats \"and\" dogs"));
       CHECK (d && !strcmp (j_pstr (json_root (d), "context.client.clientName"), "WEB"));
       CHECK (strstr (r->headers, "X-YouTube-Client-Name: 1\r\n") && strstr (r->headers, "Cookie: SOCS=CAE=\r\n"));
+      CHECK (d && !j_get (json_root (d), "params"));
       json_free (d);
       yt_req_free (r);
     }
+  /* the upload-date filter: params = base64 of protobuf {2: {1: date}},
+     i.e. 12 02 08 <date> (Today 2, week 3, month 4, year 5) */
+  for (int date = YT_DATE_TODAY; date < YT_DATE_COUNT; date++)
+    {
+      static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+      const char *p = yt_date_params (date);
+      unsigned char bytes[8];
+      int n = 0;
+      unsigned acc = 0, bits = 0;
+      for (; *p && *p != '='; p++)
+        {
+          acc = acc << 6 | (unsigned) (strchr (b64, *p) - b64);
+          if ((bits += 6) >= 8)
+            bytes[n++] = (unsigned char) (acc >> (bits -= 8)), acc &= (1u << bits) - 1;
+        }
+      CHECK (n == 4 && bytes[0] == 0x12 && bytes[1] == 2 && bytes[2] == 8 && bytes[3] == date + 1);
+      r = yt_req_search ("cats", date);
+      if (r)
+        {
+          jdoc *d = json_parse (r->body, strlen (r->body), err, sizeof err);
+          CHECK (d && !strcmp (j_pstr (json_root (d), "params"), yt_date_params (date)));
+          json_free (d);
+          yt_req_free (r);
+        }
+      CHECK (yt_date_parse (yt_date_word (date)) == date);
+    }
+  CHECK (!strcmp (yt_date_name (YT_DATE_WEEK), "This week") && yt_date_parse ("fortnight") < 0);
+  CHECK (!*yt_date_params (YT_DATE_ANY) && !*yt_date_params (99));
   r = yt_req_player ("7PIMiDcwNvc");
   CHECK (r && !strcmp (r->host, "youtubei.googleapis.com"));
   if (r)

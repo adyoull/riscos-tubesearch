@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.0-rc3 (2026-10-13): an upload-date filter, and proxies
+
+- Uploaded filter beside Search: Any time, Today, This week, This month,
+  This year (YouTube's own filter, sent as the search's params). Changing
+  it searches again; Back returns to the results before; More keeps it.
+  Config: search_date. tscli: -date.
+- Web proxies (HTTP CONNECT), for connections YouTube keeps calling a bot:
+  the http_proxy variable, which Reel's FFmpeg reads too. They must agree
+  (YouTube's video addresses only work from the connection that asked for
+  them), so TubeSearch reads http_proxy and no_proxy exactly as FFmpeg 5.1
+  does, from the system before each search or video. user:password@ for
+  proxies that want a login (Basic). Everything TubeSearch fetches goes
+  through it: lists, the player, pictures, the solver updates. tscli:
+  -proxy URL|none (for trying a proxy).
+- Asked for by Chris (5G connection).
+
 ## 0.2.0-rc2 (2026-10-12): the TV fallback, with QuickJS
 
 - When YouTube won't give the visionOS client playable addresses ("Sign in

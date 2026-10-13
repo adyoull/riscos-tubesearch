@@ -30,6 +30,16 @@ type a search and press Return.
 | Menu | Play, Related, Channel, Back, Quality (360p–1080p) |
 | a pasted YouTube address | plays it, and shows what's related |
 | Menu on the icon bar icon | Info, Search, Quality, Quit |
+| Uploaded (beside Search) | Any time, Today, This week, This month, This year |
+
+**A web proxy** (for connections YouTube keeps calling a bot, such as
+mobile broadband): `*Set http_proxy http://[user:password@]host:port/`.
+TubeSearch and Reel both use it (Reel through FFmpeg), and must agree,
+because YouTube's video addresses only work from the connection that asked
+for them; so TubeSearch reads `http_proxy` and `no_proxy` exactly as FFmpeg
+5.1 does (`http://` and a port required, Basic login, FFmpeg's `no_proxy`
+matching), and again before each search or video. The proxy must accept
+`CONNECT`.
 
 Needs RISC OS 5.28 or later (AcornSSL), SharedUnixLibrary 1.16+ and
 ARMEABISupport (PackMan), Reel 0.1.27+, and a 16 or 32 bit-per-pixel
@@ -68,7 +78,12 @@ desktop.
 - **Network**: `src/http.c` is a non-blocking HTTP/1.1 client (keep-alive,
   chunked, one connection per host), driven from null events so the
   desktop never waits. `src/transport_riscos.c` hands a UnixLib socket to
-  AcornSSL the way riscos-ffmpeg's `tls_acornssl.c` does.
+  AcornSSL the way riscos-ffmpeg's `tls_acornssl.c` does; through a proxy
+  (`src/proxy.c`), the socket first carries a `CONNECT` (as FFmpeg's
+  `httpproxy:` does) and AcornSSL takes it over once the proxy says 200.
+- **Upload-date filter**: the search's `params`, base64 of the protobuf
+  `{2: {1: date}}` (today 2, week 3, month 4, year 5), as Invidious builds
+  it; continuations carry it on.
 - **Pictures**: `i.ytimg.com` thumbnails drawn once into 32bpp sprites by
   SpriteExtend (`JPEG_PlotScaled` with output switched to the sprite).
 

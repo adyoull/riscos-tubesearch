@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.0-rc4 (2026-10-13): less address space
+
+- A dynamic area reserves its whole maximum of logical address space as
+  soon as it's made, and some machines are running out of it. TubeSearch's
+  heap now asks for 64 MB (was 128 MB; it uses about 40 MB at most) and
+  the solver's for 128 MB (was 256 MB; a first solve needs about 105-112
+  MB). With UnixLib 5.0.3.x, a heap that needs more gets a second area
+  ("TubeSearch Heap 2", "TubeSearch Solver 2") instead of failing.
+
 ## 0.2.0-rc3 (2026-10-13): an upload-date filter, and proxies
 
 - Uploaded filter beside Search: Any time, Today, This week, This month,

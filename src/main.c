@@ -9,9 +9,13 @@
    UnixLib is not to translate them. */
 int __riscosify_control = __RISCOSIFY_NO_PROCESS;
 
-/* The heap in a dynamic area of its own (the pictures: up to about 35 MB) */
+/* The heap in a dynamic area of its own. It needs about 40 MB at most
+   (150 pictures of 230K, the lists), and the area reserves its whole
+   maximum of logical address space while TubeSearch runs, so it asks for
+   64 MB, not more. If it ever ran out, UnixLib (5.0.3.x) would add a
+   "TubeSearch Heap 2" rather than fail. */
 const char *const __dynamic_da_name = "TubeSearch Heap";
-int __dynamic_da_max_size = 128 << 20;
+int __dynamic_da_max_size = 64 << 20;
 
 int main (void)
 {

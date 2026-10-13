@@ -46,9 +46,13 @@
 #include <unixlib/local.h>
 /* every file name given is a RISC OS one */
 int __riscosify_control = __RISCOSIFY_NO_PROCESS;
-/* the solver's memory (about 110 MB for a new player) in a dynamic area */
+/* The solver's memory in a dynamic area: about 105-112 MB for the first
+   solve of a new YouTube player, much less after. 128 MB is what RISC OS
+   gives a new area anyway unless DALimit has been raised; a first solve
+   that needs more gets a "TubeSearch Solver 2" from UnixLib for as long as
+   the helper runs. (It reserved 256 MB on machines with a higher DALimit.) */
 const char *const __dynamic_da_name = "TubeSearch Solver";
-int __dynamic_da_max_size = 256 << 20;
+int __dynamic_da_max_size = 128 << 20;
 #define SEP "."
 #else
 #define SEP "/"

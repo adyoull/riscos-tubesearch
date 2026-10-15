@@ -21,6 +21,7 @@ if [ -z "$NP" ]; then
     $M/search/youtubesearchextractor/all \
     $M/search/youtubesearchextractor/channel \
     $M/stream/youtubestreamextractordefault/descriptionpewdiepie \
+    $M/stream/youtubestreamextractorcollaborators \
     $M/youtubechanneltabextractor/videos \
     $M/youtubejavascriptextractor/playercode
   git -C "$NP" checkout -q "$COMMIT"
@@ -38,6 +39,8 @@ want = {
     'next.json':            'stream/youtubestreamextractordefault/descriptionpewdiepie/generated_mock_6.json',
     'channel_1.json':       'youtubechanneltabextractor/videos/generated_mock_3.json',
     'channel_2.json':       'youtubechanneltabextractor/videos/generated_mock_4.json',
+    # a visionOS answer with 35 sound tracks: the English original and dubs
+    'player_multiaudio.json': 'stream/youtubestreamextractorcollaborators/generated_mock_1.json',
 }
 want['iframe_api.js'] = 'youtubejavascriptextractor/playercode/generated_mock_0.json'
 want['player_854a788e.js'] = 'youtubejavascriptextractor/playercode/generated_mock_1.json'

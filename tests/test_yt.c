@@ -402,42 +402,71 @@ static void test_hls (void)
   char *m = load ("../hls/master.m3u8", &len), *live = load ("../hls/live.m3u8", &llen);
   char *v, *a, codec[32], err[200], host[128], path[512];
   int q;
+  yt_audio ai;
   const char *base = "https://manifest.googlevideo.com/api/manifest/hls_variant/expire/1/id/x/file/index.m3u8";
   if (!m || !live)
     return;
-  CHECK (yt_hls_choose (m, len, base, 1080, &v, &a, &q, codec, sizeof codec, err, sizeof err) == 0);
+  CHECK (yt_hls_choose (m, len, base, 1080, &v, &a, &q, codec, sizeof codec, &ai, err, sizeof err) == 0);
   CHECK (q == 1080 && strstr (v, "/itag/270/") && !strcmp (codec, "avc1.640028"));
-  CHECK (a && strstr (a, "itag%3D140/playlist") && !strstr (a, "lang"));      /* the default sound, not the German */
+  /* the sound in my language (en-GB): the English original, though
+     YouTube marks the German dub as the default */
+  CHECK (a && strstr (a, "itag%3D140;xtags%3Dacont%253Doriginal%253Alang%253Den-US") && !strcmp (ai.lang, "en") && ai.original && !ai.dubbed);
   free (v); free (a);
-  CHECK (yt_hls_choose (m, len, base, 720, &v, &a, &q, codec, sizeof codec, err, sizeof err) == 0);
+  yt_config_set ("language", "de-DE");                                       /* German: the dub */
+  CHECK (yt_hls_choose (m, len, base, 1080, &v, &a, &q, codec, sizeof codec, &ai, err, sizeof err) == 0
+         && strstr (a, "lang%253Dde-DE") && !strcmp (ai.lang, "de") && ai.dubbed);
+  free (v); free (a);
+  yt_config_set ("audio_language", "original");                              /* German, but the original */
+  CHECK (yt_hls_choose (m, len, base, 1080, &v, &a, &q, codec, sizeof codec, &ai, err, sizeof err) == 0
+         && strstr (a, "itag%3D140;xtags%3Dacont%253Doriginal%253Alang%253Den-US") && ai.original);
+  free (v); free (a);
+  yt_config_set ("audio_language", "fr");                                    /* a language named */
+  CHECK (yt_hls_choose (m, len, base, 1080, &v, &a, &q, codec, sizeof codec, &ai, err, sizeof err) == 0
+         && strstr (a, "lang%253Dfr-FR") && !strcmp (yt_lang_name (ai.lang), "French"));
+  free (v); free (a);
+  yt_config_set ("audio_language", "es");                                    /* not there: the original */
+  CHECK (yt_hls_choose (m, len, base, 1080, &v, &a, &q, codec, sizeof codec, &ai, err, sizeof err) == 0
+         && strstr (a, "itag%3D140;xtags%3Dacont%253Doriginal%253Alang%253Den-US"));
+  yt_config_set ("audio_language", "mine");
+  yt_config_set ("language", "en-GB");
+  free (v); free (a);
+  CHECK (yt_hls_choose (m, len, base, 720, &v, &a, &q, codec, sizeof codec, &ai, err, sizeof err) == 0);
   CHECK (q == 720 && strstr (v, "/itag/232/"));                                /* 30 a second, not 60 */
   free (v); free (a);
-  CHECK (yt_hls_choose (m, len, base, 480, &v, &a, &q, codec, sizeof codec, err, sizeof err) == 0);
+  CHECK (yt_hls_choose (m, len, base, 480, &v, &a, &q, codec, sizeof codec, &ai, err, sizeof err) == 0);
   CHECK (q == 360 && strstr (v, "/itag/230/"));
   free (v); free (a);
-  CHECK (yt_hls_choose (m, len, base, 144, &v, &a, &q, codec, sizeof codec, err, sizeof err) == 0);
+  CHECK (yt_hls_choose (m, len, base, 144, &v, &a, &q, codec, sizeof codec, &ai, err, sizeof err) == 0);
   CHECK (q == 144 && strstr (v, "/itag/269/") && a && strstr (a, "/itag/233/"));
   free (v); free (a);
-  CHECK (yt_hls_choose (m, len, base, 100, &v, &a, &q, codec, sizeof codec, err, sizeof err) == 0 && q == 144);
+  CHECK (yt_hls_choose (m, len, base, 100, &v, &a, &q, codec, sizeof codec, &ai, err, sizeof err) == 0 && q == 144);
   free (v); free (a);
-  CHECK (yt_hls_choose (m, len, base, 4000, &v, &a, &q, codec, sizeof codec, err, sizeof err) == 0 && q == 1080);
+  CHECK (yt_hls_choose (m, len, base, 4000, &v, &a, &q, codec, sizeof codec, &ai, err, sizeof err) == 0 && q == 1080);
   free (v); free (a);                                                         /* (never VP9) */
   /* a live stream's: the sound in the video; names from the server's root */
-  CHECK (yt_hls_choose (live, llen, base, 1080, &v, &a, &q, codec, sizeof codec, err, sizeof err) == 0);
+  CHECK (yt_hls_choose (live, llen, base, 1080, &v, &a, &q, codec, sizeof codec, &ai, err, sizeof err) == 0);
   CHECK (!a && q == 1080 && !strcmp (v, "https://manifest.googlevideo.com/api/manifest/hls_playlist/id/live/itag/301/playlist/index.m3u8"));
   free (v);
-  CHECK (yt_hls_choose (live, llen, base, 720, &v, &a, &q, codec, sizeof codec, err, sizeof err) == 0 && strstr (v, "/itag/95/"));
+  CHECK (yt_hls_choose (live, llen, base, 720, &v, &a, &q, codec, sizeof codec, &ai, err, sizeof err) == 0 && strstr (v, "/itag/95/"));
   free (v);
   {
     const char *rel = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1,CODECS=\"avc1.4d401f,mp4a.40.2\",RESOLUTION=1280x720\r\nsub/index.m3u8\r\n";
-    CHECK (yt_hls_choose (rel, strlen (rel), "https://h.example/a/b/master.m3u8?x=1", 1080, &v, &a, &q, codec, sizeof codec, err, sizeof err) == 0
+    CHECK (yt_hls_choose (rel, strlen (rel), "https://h.example/a/b/master.m3u8?x=1", 1080, &v, &a, &q, codec, sizeof codec, &ai, err, sizeof err) == 0
            && !strcmp (v, "https://h.example/a/b/sub/index.m3u8") && !a);
     free (v);
+    /* only the xtags say which is the original */
+    const char *xt = "#EXTM3U\n"
+      "#EXT-X-MEDIA:URI=\"https://x/a/xtags%3Dacont%253Ddubbed-auto%253Alang%253Dit/i.m3u8\",TYPE=AUDIO,GROUP-ID=\"1\",NAME=\"A\",DEFAULT=YES\n"
+      "#EXT-X-MEDIA:URI=\"https://x/b/xtags%3Dacont%253Doriginal%253Alang%253Dja/i.m3u8\",TYPE=AUDIO,GROUP-ID=\"1\",NAME=\"B\"\n"
+      "#EXT-X-STREAM-INF:BANDWIDTH=1,CODECS=\"avc1.4d401f\",RESOLUTION=1280x720,AUDIO=\"1\"\nhttps://x/v.m3u8\n";
+    CHECK (yt_hls_choose (xt, strlen (xt), base, 1080, &v, &a, &q, codec, sizeof codec, &ai, err, sizeof err) == 0
+           && strstr (a, "/b/") && !strcmp (ai.lang, "ja") && ai.original);
+    free (v); free (a);
     const char *vp9 = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1,CODECS=\"vp09.00.40.08\",RESOLUTION=1920x1080\nhttps://x/v.m3u8\n";
-    CHECK (yt_hls_choose (vp9, strlen (vp9), base, 1080, &v, &a, &q, codec, sizeof codec, err, sizeof err) == -1 && strstr (err, "H.264") && !v && !a);
+    CHECK (yt_hls_choose (vp9, strlen (vp9), base, 1080, &v, &a, &q, codec, sizeof codec, &ai, err, sizeof err) == -1 && strstr (err, "H.264") && !v && !a);
     const char *nosound = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1,CODECS=\"avc1.4d401f\",RESOLUTION=1280x720,AUDIO=\"9\"\nhttps://x/v.m3u8\n";
-    CHECK (yt_hls_choose (nosound, strlen (nosound), base, 1080, &v, &a, &q, codec, sizeof codec, err, sizeof err) == -1 && strstr (err, "sound"));
-    CHECK (yt_hls_choose ("<html>", 6, base, 1080, &v, &a, &q, codec, sizeof codec, err, sizeof err) == -1);
+    CHECK (yt_hls_choose (nosound, strlen (nosound), base, 1080, &v, &a, &q, codec, sizeof codec, &ai, err, sizeof err) == -1 && strstr (err, "sound"));
+    CHECK (yt_hls_choose ("<html>", 6, base, 1080, &v, &a, &q, codec, sizeof codec, &ai, err, sizeof err) == -1);
   }
   CHECK (yt_split_url (base, host, sizeof host, path, sizeof path) == 0 && !strcmp (host, "manifest.googlevideo.com")
          && !strncmp (path, "/api/manifest/hls_variant/", 26));
@@ -445,6 +474,32 @@ static void test_hls (void)
   CHECK (yt_split_url ("http://h.example/", host, sizeof host, path, sizeof path) < 0);
   free (m);
   free (live);
+  /* DASH: the same choice of sound, from a real answer with 35 tracks
+     (the English original, marked default, and 34 dubs) */
+  {
+    yt_play p;
+    char *t = load ("player_multiaudio.json", &len);
+    if (t && yt_parse_player (t, len, 720, &p, err, sizeof err) == 0)
+      {
+        CHECK (strstr (p.audio_url, "xtags=acont%3Doriginal%3Alang%3Den-US") && !strcmp (p.audio.lang, "en") && p.audio.original);
+        yt_play_free (&p);
+        yt_config_set ("language", "de");
+        CHECK (yt_parse_player (t, len, 720, &p, err, sizeof err) == 0
+               && strstr (p.audio_url, "xtags=acont%3Ddubbed%3Alang%3Dde&") && p.audio.dubbed && !strcmp (p.audio.lang, "de"));
+        yt_play_free (&p);
+        yt_config_set ("audio_language", "original");
+        CHECK (yt_parse_player (t, len, 720, &p, err, sizeof err) == 0 && strstr (p.audio_url, "acont%3Doriginal"));
+        yt_play_free (&p);
+        yt_config_set ("audio_language", "pt");
+        CHECK (yt_parse_player (t, len, 720, &p, err, sizeof err) == 0 && strstr (p.audio_url, "lang%3Dpt-BR"));
+        yt_play_free (&p);
+        yt_config_set ("audio_language", "mine");
+        yt_config_set ("language", "en-GB");
+      }
+    else
+      CHECK (0);
+    free (t);
+  }
   /* the visionOS answer has both: HLS by default, DASH when Config says so */
   {
     yt_play p;

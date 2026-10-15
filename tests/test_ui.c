@@ -530,7 +530,8 @@ int main (int argc, char **argv)
   {
     const int *m = (const int *) last_menu;          /* title 3 words, colours, width, height, gap; items of 6 words */
     CHECK (m && !strcmp ((const char *) &m[7 + 3], "Info") && m[7 + 1] == 3, "Info's submenu is the Info box");
-    CHECK (m && !strcmp ((const char *) &m[7 + 3 * 6 + 3], "Quit") && (m[7 + 3 * 6] & 0x80), "Quit is last");
+    CHECK (m && !strcmp ((const char *) &m[7 + 4 * 6 + 3], "Quit") && (m[7 + 4 * 6] & 0x80), "Quit is last");
+    CHECK (m && !strcmp ((const char *) &m[7 + 3 * 6 + 3], "Sound"), "Sound before it");
     menus_made = 0;
   }
 
@@ -837,16 +838,37 @@ int main (int argc, char **argv)
     click_tile (1, 100, 100, 4);
     pump ();
     CHECK (hls_requests == 1, "HLS: the master playlist fetched");
-    CHECK (saved_data && strstr (saved_data, "/itag/232/") && strstr (saved_data, "itag%3D140/playlist")
-           && !strstr (saved_data, "lang%3Dde") && strstr (saved_data, "\"protocol\":\"m3u8_native\"")
+    CHECK (saved_data && strstr (saved_data, "/itag/232/") && strstr (saved_data, "itag%3D140;xtags%3Dacont%253Doriginal%253Alang%253Den-US")
+           && !strstr (saved_data, "dubbed") && strstr (saved_data, "\"protocol\":\"m3u8_native\"")
            && !strstr (saved_data, "itag=136"), "HLS: the 720p variant and the default sound");
-    CHECK (strstr (status (), expect_q) && started[0], "HLS: playing");
+    CHECK (strstr (status (), expect_q) && strstr (status (), "sound: English (original)") && started[0], "HLS: playing");
+    /* German as my language: the German dub; then Sound > Original */
+    yt_config_set ("language", "de-DE");
+    click_tile (1, 100, 100, 4);
+    pump ();
+    CHECK (saved_data && strstr (saved_data, "dubbed-auto%253Alang%253Dde-DE") && strstr (status (), "sound: German (dubbed)"),
+           "HLS: my language's dub");
+    click_tile (1, 100, 100, 2);
+    {
+      const int *m = (const int *) last_menu;
+      int sel[4] = { 5, 1, -1, -1 };            /* Play, Related, Channel, Back, Quality, Sound > Original */
+      CHECK (m && !strcmp ((const char *) &m[7 + 5 * 6 + 3], "Sound") && (m[7 + 5 * 6] & 0x80), "the Sound menu, last");
+      ui_event (9, sel);
+    }
+    CHECK (!strcmp (yt_config_get ("audio_language"), "original"), "Sound > Original chosen");
+    click_tile (1, 100, 100, 4);
+    pump ();
+    CHECK (saved_data && strstr (saved_data, "acont%253Doriginal%253Alang%253Den-US") && !strstr (saved_data, "dubbed"),
+           "HLS: the original, though my language is German");
+    yt_config_set ("audio_language", "mine");
+    yt_config_set ("language", "en-GB");
     /* a master playlist that isn't one: the DASH streams instead */
     hls_broken = 1;
+    hls_requests = 0;
     started[0] = 0;
     click_tile (1, 100, 100, 4);
     pump ();
-    CHECK (hls_requests == 2 && saved_data && strstr (saved_data, "itag=136") && !strstr (saved_data, "m3u8_native")
+    CHECK (hls_requests == 1 && saved_data && strstr (saved_data, "itag=136") && !strstr (saved_data, "m3u8_native")
            && started[0], "HLS unusable: DASH");
     hls_broken = 0;
   }

@@ -106,6 +106,23 @@ int yt_parse_visitor (const char *json, size_t len);
 
 /* ---- playing ------------------------------------------------------------ */
 
+/* A sound track: its language ("en", "" unknown), and whether it's the
+   original, a dub, or the one YouTube marks as the default. */
+typedef struct {
+  char lang[16];
+  int original, dubbed, dflt;
+} yt_audio;
+
+/* How well a track suits Config's audio_language: "mine" (the default: the
+   language of Config's language setting, then the original), "original"
+   (what the video was made with), or a language code ("de"). Higher is
+   better. */
+int yt_audio_score (const yt_audio *a);
+/* "en-GB" -> "en" (into out). */
+void yt_lang_primary (const char *code, char *out, size_t size);
+/* "en" -> "English" (or the code itself). */
+const char *yt_lang_name (const char *code);
+
 typedef struct {
   char *title;              /* UTF-8 */
   char *video_url;          /* the video stream (or video+sound), or NULL with hls_url */
@@ -114,6 +131,7 @@ typedef struct {
   int quality;              /* the video's lines (720, 1080...), 0 unknown */
   char codec[32];
   int live;                 /* a live stream */
+  yt_audio audio;           /* the sound track chosen */
   int hls;                  /* video_url (and audio_url) are HLS playlists (yt_hls_choose) */
   /* The TV client's addresses carry challenges that YouTube's JavaScript
      answers (jsolve.h): a scrambled signature (s, added back as the
@@ -153,13 +171,15 @@ int yt_want_hls (const yt_play *p);
 /* From a master playlist (its text, and its own address for relative
    names): the H.264 variant no taller than maxq lines (the tallest; at the
    same height 30 frames a second or less, then the most bits), and its
-   sound when the variant has a separate AUDIO group (the default one).
+   sound when the variant has a separate AUDIO group (the track that suits
+   audio_language best: yt_audio_score; then the first; *audio_info says
+   which).
    *video and *audio (NULL when the sound is in the video) are malloc'd
    media-playlist addresses; *quality the lines; codec the variant's H.264
    codec. 0, or -1 with the reason in err. */
 int yt_hls_choose (const char *m3u8, size_t len, const char *base_url, int maxq,
                    char **video, char **audio, int *quality, char *codec, size_t codecsize,
-                   char *err, size_t errlen);
+                   yt_audio *audio_info, char *err, size_t errlen);
 
 /* Splits an https address into host and path (for http_get). 0, or -1. */
 int yt_split_url (const char *url, char *host, size_t hostsize, char *path, size_t pathsize);

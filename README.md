@@ -27,7 +27,7 @@ type a search and press Return.
 | Select on a channel's name | that channel's videos |
 | More (last tile) | the next part of the list |
 | Back | the page before |
-| Menu | Play, Related, Channel, Back, Quality (360p–1080p) |
+| Menu | Play, Related, Channel, Back, Quality (360p–1080p), Sound (my language / original) |
 | a pasted YouTube address | plays it, and shows what's related |
 | Menu on the icon bar icon | Info, Search, Quality, Quit |
 | Uploaded (beside Search) | Any time, Today, This week, This month, This year |

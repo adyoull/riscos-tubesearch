@@ -1025,7 +1025,11 @@ static void play_done (yt_play *pl, const char *err, void *ctx)
     }
   if (fail (start_task (cmd, NULL)))
     return;
-  set_status ("Playing %dp%s in Reel", pl->quality, pl->live ? " (live)" : "");
+  if (pl->audio_url && pl->audio.lang[0])
+    set_status ("Playing %dp%s in Reel, sound: %s%s", pl->quality, pl->live ? " (live)" : "",
+                yt_lang_name (pl->audio.lang), pl->audio.original ? " (original)" : pl->audio.dubbed ? " (dubbed)" : "");
+  else
+    set_status ("Playing %dp%s in Reel", pl->quality, pl->live ? " (live)" : "");
 }
 
 static void play (const yt_item *it)
@@ -1050,7 +1054,7 @@ static void play (const yt_item *it)
 typedef struct { int flags, submenu, icon_flags; int data[3]; } menu_item;
 typedef struct { char title[12]; unsigned char colours[4]; int width, height, gap; menu_item item[6]; } menu_block;
 
-static menu_block quality_menu, bar_menu, tile_menu, date_menu;
+static menu_block quality_menu, bar_menu, tile_menu, date_menu, sound_menu;
 static enum { M_NONE, M_ICONBAR, M_TILE, M_DATE } menu_open;
 static int menu_tile = -1;
 static char tile_menu_channel[200];
@@ -1095,6 +1099,21 @@ static void build_quality_menu (void)
     menu_add (&quality_menu, i, names[i], 0, (q[i] == quality ? 1 : 0) | (i == 3 ? 0x80 : 0));
 }
 
+/* Sound: the track in my language (Config's language), or the original */
+static void build_sound_menu (void)
+{
+  const char *a = yt_config_get ("audio_language");
+  menu_init (&sound_menu, "Sound", 300);
+  menu_add (&sound_menu, 0, "My language", 0, !strcmp (a, "mine") ? 1 : 0);
+  menu_add (&sound_menu, 1, "Original", 0, (!strcmp (a, "original") ? 1 : 0) | 0x80);
+}
+
+static void choose_sound (int i)
+{
+  if (i == 0 || i == 1)
+    yt_config_set ("audio_language", i == 0 ? "mine" : "original");
+}
+
 static void build_date_menu (void)
 {
   menu_init (&date_menu, "Uploaded", 260);
@@ -1132,13 +1151,15 @@ static void set_search_date (int date)
 static void open_iconbar_menu (int x)
 {
   build_quality_menu ();
+  build_sound_menu ();
   menu_init (&bar_menu, APP_NAME, 240);
   menu_add (&bar_menu, 0, "Info", info, 0);             /* (a window handle: the Wimp opens it) */
   menu_add (&bar_menu, 1, "Search...", 0, 0);
-  menu_add (&bar_menu, 2, "Quality", (int) &quality_menu, 2 /* dotted line */);
-  menu_add (&bar_menu, 3, "Quit", 0, 0x80);
+  menu_add (&bar_menu, 2, "Quality", (int) &quality_menu, 0);
+  menu_add (&bar_menu, 3, "Sound", (int) &sound_menu, 2 /* dotted line */);
+  menu_add (&bar_menu, 4, "Quit", 0, 0x80);
   menu_open = M_ICONBAR;
-  fail (_swix (Wimp_CreateMenu, _INR (1, 3), &bar_menu, x - 64, 96 + 4 * 44));
+  fail (_swix (Wimp_CreateMenu, _INR (1, 3), &bar_menu, x - 64, 96 + 5 * 44));
 }
 
 static void open_tile_menu (int i, int x, int y)
@@ -1147,6 +1168,7 @@ static void open_tile_menu (int i, int x, int y)
   const yt_item *it;
   int n = 0;
   build_quality_menu ();
+  build_sound_menu ();
   menu_tile = i;
   if (p && i >= 0 && i < p->list.n)
     {
@@ -1172,7 +1194,8 @@ static void open_tile_menu (int i, int x, int y)
   menu_add (&tile_menu, n++, "Back", 0, 0);
   if (depth <= 1)
     tile_menu.item[n - 1].icon_flags |= 1 << 22;
-  menu_add (&tile_menu, n++, "Quality", (int) &quality_menu, 0x80);
+  menu_add (&tile_menu, n++, "Quality", (int) &quality_menu, 0);
+  menu_add (&tile_menu, n++, "Sound", (int) &sound_menu, 0x80);
   menu_open = M_TILE;
   fail (_swix (Wimp_CreateMenu, _INR (1, 3), &tile_menu, x - 64, y));
 }
@@ -1208,11 +1231,14 @@ static int menu_selection (const int *sel)
         show_window (1);
       else if (sel[0] == 2 && sel[1] >= 0)
         quality = sel[1] == 0 ? 360 : sel[1] == 1 ? 480 : sel[1] == 2 ? 720 : 1080;
-      else if (sel[0] == 3)
+      else if (sel[0] == 3 && sel[1] >= 0)
+        choose_sound (sel[1]);
+      else if (sel[0] == 4)
         return 1;
       if (adjust)
         {
           build_quality_menu ();
+          build_sound_menu ();
           _swix (Wimp_CreateMenu, _INR (1, 3), &bar_menu, 0, 0);
           return 0;
         }
@@ -1242,9 +1268,12 @@ static int menu_selection (const int *sel)
         go_back ();
       else if (i == base + 1 && sel[1] >= 0)
         quality = sel[1] == 0 ? 360 : sel[1] == 1 ? 480 : sel[1] == 2 ? 720 : 1080;
-      if (adjust && i == base + 1)
+      else if (i == base + 2 && sel[1] >= 0)
+        choose_sound (sel[1]);
+      if (adjust && (i == base + 1 || i == base + 2))
         {
           build_quality_menu ();
+          build_sound_menu ();
           _swix (Wimp_CreateMenu, _INR (1, 3), &tile_menu, 0, 0);
           return 0;
         }

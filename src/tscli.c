@@ -83,8 +83,12 @@ static void play_done (yt_play *p, const char *err, void *ctx)
     }
   else
     {
-      fprintf (stderr, "%s: %dp %s%s%s\n", p->title ? p->title : id, p->quality, p->codec,
+      fprintf (stderr, "%s: %dp %s%s%s", p->title ? p->title : id, p->quality, p->codec,
                p->audio_url ? " + AAC" : "", p->live ? " (live, HLS)" : p->hls ? " (HLS)" : " (DASH)");
+      if (p->audio_url && p->audio.lang[0])
+        fprintf (stderr, ", sound: %s%s", yt_lang_name (p->audio.lang),
+                 p->audio.original ? " (original)" : p->audio.dubbed ? " (dubbed)" : "");
+      fputc ('\n', stderr);
       out_json = yt_reel_json (p, id);
     }
   finished = 1;
@@ -122,7 +126,7 @@ static void print_list (const yt_list *l, int from)
 static int usage (void)
 {
   fprintf (stderr, "usage: tscli [-more N] [-dump DIR] [-config FILE] [-client C] [-ejs DIR] [-state DIR] [-work DIR]\n"
-                   "             [-date any|today|week|month|year] [-proxy URL|none]\n"
+                   "             [-date any|today|week|month|year] [-proxy URL|none] [-sound mine|original|LANG]\n"
                    "             search WORDS... | related ID | channel ID | play ID [LINES] [FILE]\n"
                    "             | update | [-wimp] solve JOB ANSWER\n");
   return 2;
@@ -253,6 +257,8 @@ int main (int argc, char **argv)
         }
       else if (!strcmp (argv[a], "-proxy"))
         proxy_override = argv[a + 1];
+      else if (!strcmp (argv[a], "-sound"))
+        yt_config_set ("audio_language", argv[a + 1]);
       else
         return usage ();
       a += 2;

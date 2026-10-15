@@ -16,6 +16,14 @@ max_quality = 1080
 # Live streams are always HLS; if a video has no HLS, DASH is used.
 stream_format = hls
 
+# Which sound track, when a video has dubs as well as its original
+# (Sound on the menus changes it):
+#   mine      the track in your language (the language setting below),
+#             else the original
+#   original  always what the video was made with
+#   de, fr... that language, else the original
+audio_language = mine
+
 # The upload-date filter searches start with (the menu beside Search
 # changes it): any, today, week, month or year.
 search_date = any

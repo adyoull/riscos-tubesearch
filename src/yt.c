@@ -32,6 +32,7 @@ static setting settings[] = {
   { "channel_videos_params", "EgZ2aWRlb3PyBgQKAjoA", NULL },
   { "max_quality", "1080", NULL },
   { "stream_format", "hls", NULL },           /* hls, dash (yt.h) */
+  { "audio_language", "mine", NULL },         /* mine, original, or a language code (yt.h) */
   { "search_date", "any", NULL },             /* any, today, week, month, year */
   /* the fallback when the player client gives nothing playable: yt-dlp
      2026-10-10's default client, tv_samsung (needs the player's JavaScript) */
@@ -979,14 +980,121 @@ static int lines_of (const jnode *f)
   return (int) j_long (j_get (f, "height"), 0);
 }
 
-/* The other language tracks and the "DRC" (quieter) copies of the sound
-   are left out: the default track only. */
-static int default_audio (const jnode *f)
+/* ---- which sound track ---------------------------------------------------
+
+   Many videos have dubbed tracks besides the original (YouTube's own
+   auto-dubbing, Arabic to Vietnamese). A track's language and whether it
+   is the original are in its address's xtags (acont=original|dubbed...:
+   lang=de), %-encoded once or more, and in DASH's audioTrack (id "de.3",
+   displayName "English (US) original") or HLS's LANGUAGE and NAME. */
+
+static int hexval (int c);
+
+/* s with %XX decoded, up to three times over, into out. */
+static void pct_decode3 (const char *s, size_t n, char *out, size_t size)
+{
+  char tmp[2048];
+  size_t o = 0;
+  for (size_t i = 0; i < n && o + 1 < sizeof tmp; i++)
+    tmp[o++] = s[i];
+  tmp[o] = 0;
+  for (int round = 0; round < 3; round++)
+    {
+      char *r = tmp, *w = tmp;
+      int changed = 0;
+      while (*r)
+        {
+          int h1, h2;
+          if (r[0] == '%' && r[1] && r[2] && (h1 = hexval (r[1])) >= 0 && (h2 = hexval (r[2])) >= 0)
+            {
+              *w++ = (char) (h1 * 16 + h2);
+              r += 3;
+              changed = 1;
+            }
+          else
+            *w++ = *r++;
+        }
+      *w = 0;
+      if (!changed)
+        break;
+    }
+  snprintf (out, size, "%s", tmp);
+}
+
+/* What an address says about its sound: lang (primary subtag, lower case)
+   and whether it's the original. */
+static void xtags_of (const char *url, size_t n, yt_audio *a)
+{
+  char d[2048];
+  const char *l;
+  pct_decode3 (url, n, d, sizeof d);
+  if (strstr (d, "acont=original"))
+    a->original = 1;
+  if (strstr (d, "acont=dubbed"))
+    a->dubbed = 1;
+  if ((l = strstr (d, "lang=")) && !a->lang[0])
+    yt_lang_primary (l + 5, a->lang, sizeof a->lang);
+}
+
+void yt_lang_primary (const char *code, char *out, size_t size)
+{
+  size_t i = 0;
+  while (code[i] && i + 1 < size && ((code[i] >= 'a' && code[i] <= 'z') || (code[i] >= 'A' && code[i] <= 'Z')))
+    {
+      out[i] = (char) (code[i] >= 'A' && code[i] <= 'Z' ? code[i] + 32 : code[i]);
+      i++;
+    }
+  out[i] = 0;
+}
+
+int yt_audio_score (const yt_audio *a)
+{
+  const char *want = CFG ("audio_language");
+  char mine[16];
+  int original = a->original || (!a->dubbed && a->dflt);
+  if (!strcmp (want, "original"))
+    return (original ? 8 : 0) + (a->dflt ? 2 : 0);
+  yt_lang_primary (strcmp (want, "mine") ? want : CFG ("language"), mine, sizeof mine);
+  return (mine[0] && !strcmp (a->lang, mine) ? 8 : 0) + (original ? 4 : 0) + (a->dflt ? 2 : 0);
+}
+
+const char *yt_lang_name (const char *code)
+{
+  static const char *const names[][2] = {
+    { "en", "English" }, { "de", "German" }, { "fr", "French" }, { "es", "Spanish" }, { "it", "Italian" },
+    { "nl", "Dutch" }, { "pt", "Portuguese" }, { "sv", "Swedish" }, { "da", "Danish" }, { "no", "Norwegian" },
+    { "nb", "Norwegian" }, { "fi", "Finnish" }, { "pl", "Polish" }, { "cs", "Czech" }, { "sk", "Slovak" },
+    { "hu", "Hungarian" }, { "el", "Greek" }, { "tr", "Turkish" }, { "ru", "Russian" }, { "uk", "Ukrainian" },
+    { "ja", "Japanese" }, { "ko", "Korean" }, { "zh", "Chinese" }, { "hi", "Hindi" }, { "ar", "Arabic" },
+    { "id", "Indonesian" }, { "vi", "Vietnamese" }, { "th", "Thai" }, { "ga", "Irish" }, { "cy", "Welsh" },
+  };
+  for (size_t i = 0; i < sizeof names / sizeof names[0]; i++)
+    if (!strcmp (code, names[i][0]))
+      return names[i][1];
+  return code;
+}
+
+/* A DASH format's sound: the "DRC" (quieter) copies are left out (-1). */
+static int dash_audio (const jnode *f, yt_audio *a)
 {
   const jnode *t = j_get (f, "audioTrack");
+  const char *u = j_str (j_get (f, "url")) ? j_str (j_get (f, "url")) : j_str (j_get (f, "signatureCipher"));
+  memset (a, 0, sizeof *a);
   if (j_true (j_get (f, "isDrc")))
-    return 0;
-  return !t || j_true (j_get (t, "audioIsDefault"));
+    return -1;
+  if (!t)
+    {
+      a->dflt = a->original = 1;                 /* (one track only) */
+      return 0;
+    }
+  a->dflt = j_true (j_get (t, "audioIsDefault"));
+  if (j_str (j_get (t, "id")))
+    yt_lang_primary (j_str (j_get (t, "id")), a->lang, sizeof a->lang);
+  if (j_str (j_get (t, "displayName")) && strstr (j_str (j_get (t, "displayName")), "original"))
+    a->original = 1;
+  if (u)
+    xtags_of (u, strlen (u), a);
+  return 0;
 }
 
 /* ---- addresses and their challenges ---------------------------------------- */
@@ -1190,8 +1298,9 @@ int yt_parse_player (const char *json, size_t len, int maxq, yt_play *p, char *e
   jdoc *d = json_parse (json, len, jerr, sizeof jerr);
   const jnode *root, *ps, *sd, *af, *best_v = NULL, *best_a = NULL, *f;
   const char *status, *hls;
-  int best_q = 0;
+  int best_q = 0, best_as = 0;
   long best_vb = 0, best_ab = 0;
+  yt_audio aud, best_aud;
 
   memset (p, 0, sizeof *p);
   yt_player_final = 0;
@@ -1257,12 +1366,15 @@ int yt_parse_player (const char *json, size_t len, int maxq, yt_play *p, char *e
                   best_vb = rate;
                 }
             }
-          else if (!strncmp (mime, "audio/mp4", 9) && default_audio (f))
+          else if (!strncmp (mime, "audio/mp4", 9) && !dash_audio (f, &aud))
             {
-              if (!best_a || rate > best_ab)
+              int sc = yt_audio_score (&aud);
+              if (!best_a || sc > best_as || (sc == best_as && rate > best_ab))
                 {
                   best_a = f;
                   best_ab = rate;
+                  best_as = sc;
+                  best_aud = aud;
                 }
             }
         }
@@ -1278,6 +1390,7 @@ int yt_parse_player (const char *json, size_t len, int maxq, yt_play *p, char *e
           p->video_url = NULL;
         }
       p->quality = best_q;
+      p->audio = best_aud;
       if (c)
         {
           size_t l = strcspn (c + 8, "\"");
@@ -1428,10 +1541,10 @@ static char *hls_resolve (const char *base, const char *name, size_t n)
 
 int yt_hls_choose (const char *m3u8, size_t len, const char *base_url, int maxq,
                    char **video, char **audio, int *quality, char *codec, size_t codecsize,
-                   char *err, size_t errlen)
+                   yt_audio *audio_info, char *err, size_t errlen)
 {
   /* the audio renditions, and the best variant so far */
-  struct { char group[64]; const char *uri; size_t urilen; int dflt; } aud[24];
+  struct { char group[64]; const char *uri; size_t urilen; yt_audio a; } aud[64];
   int na = 0, have = 0, best_q = 0, best_fps = 0;
   long best_bw = 0;
   const char *best_uri = NULL;
@@ -1442,6 +1555,8 @@ int yt_hls_choose (const char *m3u8, size_t len, const char *base_url, int maxq,
   size_t pending_len = 0;
 
   *video = *audio = NULL;
+  memset (audio_info, 0, sizeof *audio_info);
+  audio_info->original = audio_info->dflt = 1;  /* (the sound in the video: its only track) */
   if (len < 7 || strncmp (m3u8, "#EXTM3U", 7))
     {
       snprintf (err, errlen, "YouTube's HLS playlist wasn't one");
@@ -1462,9 +1577,9 @@ int yt_hls_choose (const char *m3u8, size_t len, const char *base_url, int maxq,
         {
           const char *l = a + 13;
           size_t n = (size_t) (b - l);
-          char t[16], g[64], u[8], d[8];
+          char t[16], g[64], u[8], d[8], lang[32], name[128];
           const char *uq;
-          if (na < 24 && hls_attr (l, n, "TYPE", t, sizeof t) && !strcmp (t, "AUDIO")
+          if (na < 64 && hls_attr (l, n, "TYPE", t, sizeof t) && !strcmp (t, "AUDIO")
               && hls_attr (l, n, "GROUP-ID", g, sizeof g) && hls_attr (l, n, "URI", u, sizeof u)
               && (uq = strstr (l, "URI=\"")) && uq < b)
             {
@@ -1474,7 +1589,13 @@ int yt_hls_choose (const char *m3u8, size_t len, const char *base_url, int maxq,
                   snprintf (aud[na].group, sizeof aud[na].group, "%s", g);
                   aud[na].uri = uq + 5;
                   aud[na].urilen = (size_t) (q2 - uq - 5);
-                  aud[na].dflt = hls_attr (l, n, "DEFAULT", d, sizeof d) && !strcmp (d, "YES");
+                  memset (&aud[na].a, 0, sizeof aud[na].a);
+                  aud[na].a.dflt = hls_attr (l, n, "DEFAULT", d, sizeof d) && !strcmp (d, "YES");
+                  if (hls_attr (l, n, "LANGUAGE", lang, sizeof lang))
+                    yt_lang_primary (lang, aud[na].a.lang, sizeof aud[na].a.lang);
+                  if (hls_attr (l, n, "NAME", name, sizeof name) && strstr (name, "original"))
+                    aud[na].a.original = 1;
+                  xtags_of (aud[na].uri, aud[na].urilen, &aud[na].a);
                   na++;
                 }
             }
@@ -1532,15 +1653,23 @@ int yt_hls_choose (const char *m3u8, size_t len, const char *base_url, int maxq,
     }
   if (best_group[0])
     {
-      int pick = -1;
+      int pick = -1, best_sc = -1;
       for (int i = 0; i < na; i++)
-        if (!strcmp (aud[i].group, best_group) && (pick < 0 || (aud[i].dflt && !aud[pick].dflt)))
-          pick = i;
+        if (!strcmp (aud[i].group, best_group))
+          {
+            int sc = yt_audio_score (&aud[i].a);
+            if (sc > best_sc)
+              {
+                pick = i;
+                best_sc = sc;
+              }
+          }
       if (pick < 0)
         {
           snprintf (err, errlen, "YouTube's HLS playlist has no sound for its video");
           return -1;
         }
+      *audio_info = aud[pick].a;
       if (!(*audio = hls_resolve (base_url, aud[pick].uri, aud[pick].urilen)))
         {
           snprintf (err, errlen, "YouTube's HLS playlist has an address TubeSearch can't use");

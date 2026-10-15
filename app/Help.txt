@@ -30,7 +30,7 @@ In the window:
   Select on a channel   (in search results) its videos
   More (the last tile)  fetches the next part of the list
   Back                  the page before (up to 24 are kept)
-  Menu                  Play, Related, Channel, Back, and Quality
+  Menu                  Play, Related, Channel, Back, Quality and Sound
 
 Beside Search, the Uploaded filter (click it, or its menu button) limits
 searches to videos uploaded Today, This week, This month or This year, or
@@ -44,6 +44,12 @@ Quality (on the menus) is the tallest video asked for: 360p, 480p,
 720p or 1080p (the default). TubeSearch asks YouTube for H.264 video, which
 the Pi decodes in hardware up to 1080p, and AAC sound. At the same height
 it takes 30 frames a second rather than 60.
+
+Many videos now have dubbed sound tracks besides the original (YouTube
+adds some itself). Sound on the menus chooses: My language plays the
+track in your language (Config's language setting, en-GB at first) if
+the video has one, and the original otherwise; Original always plays
+what the video was made with. The status line says which it is.
 
 Videos are played as HLS: YouTube's playlists of short pieces, each
 fetched on its own. YouTube can slow down, or refuse part way, the two
@@ -134,6 +140,7 @@ and find faults (and the JavaScript helper):
   tscli update                  checks for newer solver scripts now
   tscli -date week search ...   search with the Uploaded filter
   tscli -proxy <URL>|none ...   a proxy instead of http_proxy
+  tscli -sound original ...     the sound track: mine, original or a language
 
 Licence
 -------

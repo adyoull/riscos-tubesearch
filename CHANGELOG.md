@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.0-rc6 (2026-10-15): the right sound track
+
+- Videos with dubbed tracks (YouTube's auto-dubbing adds many) could start
+  in German: rc5's HLS took the track the playlist marked default, which
+  can be a dub. TubeSearch now reads each track's language and whether
+  it's the original (the xtags in its address: acont=original|dubbed,
+  lang=; HLS's LANGUAGE and NAME; DASH's audioTrack) and plays the one in
+  your language (Config's language), else the original. DASH chooses the
+  same way.
+- Sound on the menus: My language / Original (Config audio_language =
+  mine | original | a language code). The status line says which track
+  is playing, as "sound: English (original)". tscli: -sound.
+
 ## 0.2.0-rc5 (2026-10-15): HLS, for smooth playing
 
 - Videos are played as HLS by default: TubeSearch fetches YouTube's HLS

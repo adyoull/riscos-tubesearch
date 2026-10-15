@@ -131,10 +131,11 @@ static void hls_done (http_req *r, void *ctx)
   const char *body = http_body (r, &len);
   char *v = NULL, *a = NULL, codec[32], err[200];
   int q = 0;
+  yt_audio ai;
   op->req = NULL;
   dump ("hls", body, len);
   if (http_status (r) == 200
-      && !yt_hls_choose (body, len, op->tv.hls_url, op->maxq, &v, &a, &q, codec, sizeof codec, err, sizeof err))
+      && !yt_hls_choose (body, len, op->tv.hls_url, op->maxq, &v, &a, &q, codec, sizeof codec, &ai, err, sizeof err))
     {
       free (op->tv.video_url);
       free (op->tv.audio_url);
@@ -142,6 +143,7 @@ static void hls_done (http_req *r, void *ctx)
       op->tv.audio_url = a;
       op->tv.quality = q;
       op->tv.hls = 1;
+      op->tv.audio = ai;
       snprintf (op->tv.codec, sizeof op->tv.codec, "%s", codec);
     }
   /* (otherwise the DASH streams, or for a live stream the master playlist itself) */

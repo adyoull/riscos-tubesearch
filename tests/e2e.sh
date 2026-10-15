@@ -56,9 +56,12 @@ import json,sys
 d=json.load(open('$W/play.json'))
 f=d['requested_formats']
 assert '/itag/232/' in f[0]['url'] and f[0]['acodec']=='none' and f[0]['protocol']=='m3u8_native'
-assert 'itag%3D140/playlist' in f[1]['url'] and f[1]['vcodec']=='none'
+assert 'acont%253Doriginal%253Alang%253Den-US' in f[1]['url'] and f[1]['vcodec']=='none'
 assert d['webpage_url'].endswith('7PIMiDcwNvc')
 \""
+check "HLS: the English original sound, said so" "grep -q 'sound: English (original)' '$W/err'"
+"$CLI" -sound fr play 7PIMiDcwNvc 720 "$W/fr.json" 2> "$W/err" || { cat "$W/err"; fail=1; }
+check "-sound fr: the French dub" "grep -q 'sound: French (dubbed)' '$W/err' && grep -q 'lang%253Dfr-FR' '$W/fr.json'"
 printf 'stream_format = dash\n' > "$W/dash.cfg"
 "$CLI" -config "$W/dash.cfg" play 7PIMiDcwNvc 720 "$W/dash.json" 2> "$W/err" || { cat "$W/err"; fail=1; }
 check "play with stream_format = dash: the DASH pair" "grep -q '720p avc1' '$W/err' && python3 -I -c \"
@@ -74,8 +77,8 @@ rows=[json.loads(l) for l in open('$W/log')]
 bad=[r for r in rows if r.get('problems')]
 assert not bad, bad
 eps=[r.get('endpoint') for r in rows]
-assert eps.count('visitor_id')==5, eps
-assert eps.count('player')==2 and eps.count('search')==2 and eps.count('browse')==2 and eps.count('next')==1, eps
+assert eps.count('visitor_id')==6, eps
+assert eps.count('player')==3 and eps.count('search')==2 and eps.count('browse')==2 and eps.count('next')==1, eps
 \""
 "$CLI" play badvideoid 720 > /dev/null 2> "$W/err" && fail=1
 check "an unplayable answer is reported" "grep -q 'tscli:' '$W/err'"

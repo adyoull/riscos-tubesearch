@@ -54,8 +54,13 @@ desktop.
   break it.
 - **Streams**: the VISIONOS client's `player`, which (October 2026) gives
   plain addresses: no JavaScript deciphering and no proof-of-origin
-  token. TubeSearch picks H.264 (`avc1`) no taller than the chosen quality and
-  the default AAC track (HLS for live streams).
+  token. By default (`stream_format = hls`) TubeSearch fetches the answer's
+  HLS master playlist and gives Reel the H.264 variant no taller than the
+  chosen quality (30 fps preferred) and its default sound group, as two
+  media playlists; YouTube throttles or refuses long DASH requests part way
+  (they need yt-dlp's 10 MB range chunks), while HLS is many short ones.
+  `stream_format = dash` gives the DASH pair: H.264 (`avc1`) and the default
+  AAC track.
 - **The TV fallback**: when YouTube won't serve that client, TubeSearch asks
   as YouTube's TV app (TVHTML5, yt-dlp's default client), whose addresses
   carry a scrambled signature and an "n" challenge. It fetches the player's

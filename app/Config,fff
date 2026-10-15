@@ -9,6 +9,13 @@
 # The tallest video to ask for (lines): 360, 480, 720 or 1080.
 max_quality = 1080
 
+# How the video is played:
+#   hls   YouTube's HLS playlists: short pieces, each its own request
+#         (YouTube can slow down or refuse its long DASH streams part way)
+#   dash  the two DASH streams, video and sound (as before 0.2.0-rc5)
+# Live streams are always HLS; if a video has no HLS, DASH is used.
+stream_format = hls
+
 # The upload-date filter searches start with (the menu beside Search
 # changes it): any, today, week, month or year.
 search_date = any

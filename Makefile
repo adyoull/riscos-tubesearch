@@ -14,8 +14,8 @@ RCD_DIR ?= ../riscos-crossdev
 include $(RCD_DIR)/riscos.mk
 .DEFAULT_GOAL := all
 
-VERSION := 0.2.0-rc4
-DATE := 13 Oct 2026
+VERSION := 0.2.0-rc5
+DATE := 15 Oct 2026
 VERDEFS := -DTUBE_VERSION='"$(VERSION)"' -DTUBE_DATE='"$(DATE)"'
 OUT := out
 EJS_VERSION := 0.8.0

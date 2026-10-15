@@ -51,13 +51,22 @@ check "related: 20 videos and the title" "grep -q '^== Marzia & Felix - Wedding 
 "$CLI" -more 1 channel UCTwECeGqMZee77BjdoYtI2Q > "$W/channel" 2> "$W/err" || { cat "$W/err"; fail=1; }
 check "channel: 60 videos" "grep -q '^== Creative Commons' '$W/channel' && [ \$(grep -c '^[A-Za-z0-9_-]\{11\} ' '$W/channel') -eq 60 ]"
 "$CLI" play 7PIMiDcwNvc 720 "$W/play.json" 2> "$W/err" || { cat "$W/err"; fail=1; }
-check "play: 720p H.264 + AAC for Reel" "grep -q '720p avc1' '$W/err' && python3 -I -c \"
+check "play: 720p H.264 + AAC as HLS for Reel" "grep -q '720p avc1.4D401F + AAC (HLS)' '$W/err' && python3 -I -c \"
 import json,sys
 d=json.load(open('$W/play.json'))
 f=d['requested_formats']
-assert 'itag=136' in f[0]['url'] and f[0]['acodec']=='none'
-assert 'itag=140' in f[1]['url'] and f[1]['vcodec']=='none'
+assert '/itag/232/' in f[0]['url'] and f[0]['acodec']=='none' and f[0]['protocol']=='m3u8_native'
+assert 'itag%3D140/playlist' in f[1]['url'] and f[1]['vcodec']=='none'
 assert d['webpage_url'].endswith('7PIMiDcwNvc')
+\""
+printf 'stream_format = dash\n' > "$W/dash.cfg"
+"$CLI" -config "$W/dash.cfg" play 7PIMiDcwNvc 720 "$W/dash.json" 2> "$W/err" || { cat "$W/err"; fail=1; }
+check "play with stream_format = dash: the DASH pair" "grep -q '720p avc1' '$W/err' && python3 -I -c \"
+import json,sys
+d=json.load(open('$W/dash.json'))
+f=d['requested_formats']
+assert 'itag=136' in f[0]['url'] and f[0]['acodec']=='none' and 'protocol' not in f[0]
+assert 'itag=140' in f[1]['url'] and f[1]['vcodec']=='none'
 \""
 check "every request as YouTube expects" "python3 -I -c \"
 import json
@@ -65,8 +74,8 @@ rows=[json.loads(l) for l in open('$W/log')]
 bad=[r for r in rows if r.get('problems')]
 assert not bad, bad
 eps=[r.get('endpoint') for r in rows]
-assert eps.count('visitor_id')==4, eps
-assert eps.count('player')==1 and eps.count('search')==2 and eps.count('browse')==2 and eps.count('next')==1, eps
+assert eps.count('visitor_id')==5, eps
+assert eps.count('player')==2 and eps.count('search')==2 and eps.count('browse')==2 and eps.count('next')==1, eps
 \""
 "$CLI" play badvideoid 720 > /dev/null 2> "$W/err" && fail=1
 check "an unplayable answer is reported" "grep -q 'tscli:' '$W/err'"
@@ -147,7 +156,7 @@ print(sum(1 for l in open('$W/plog') for r in [json.loads(l)] if r['target']==sy
 "$CLI" -proxy "http://chris:se%40cret@127.0.0.1:$PPORT/" search test > "$W/psearch" 2> "$W/err" || { cat "$W/err"; fail=1; }
 check "-proxy: the search goes through the proxy, signed in" "grep -q 'through the proxy 127.0.0.1:$PPORT' '$W/err' && [ \$(grep -c '^[A-Za-z0-9_-]\{11\} ' '$W/psearch') -eq 23 ] && [ \$(pcount www.youtube.com:443) -ge 1 ]"
 http_proxy="http://chris:se%40cret@127.0.0.1:$PPORT" "$CLI" play 7PIMiDcwNvc 720 "$W/pplay.json" 2> "$W/err" || { cat "$W/err"; fail=1; }
-check "http_proxy: the player is asked through it too" "grep -q 'itag=136' '$W/pplay.json' && [ \$(pcount youtubei.googleapis.com:443) -eq 1 ]"
+check "http_proxy: the player is asked through it too" "grep -q '/itag/232/' '$W/pplay.json' && [ \$(pcount youtubei.googleapis.com:443) -eq 1 ] && [ \$(pcount manifest.googlevideo.com:443) -eq 1 ]"
 before=$(wc -l < "$W/plog")
 http_proxy="http://chris:se%40cret@127.0.0.1:$PPORT" no_proxy=".youtube.com" "$CLI" search test > /dev/null 2> "$W/err" || { cat "$W/err"; fail=1; }
 check "no_proxy: those hosts directly" "[ \$(wc -l < '$W/plog') -eq $before ]"

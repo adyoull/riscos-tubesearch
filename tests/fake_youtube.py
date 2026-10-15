@@ -12,11 +12,12 @@ EJS_DIR: manifest.json and VERSION/yt.solver.*.min.js, served as
 raw.githubusercontent.com and GitHub's release downloads (with GitHub's
 redirect to its asset server).
 Part of TubeSearch. MIT licence."""
-import json, ssl, sys, threading
+import os, json, ssl, sys, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PORT, CERT, KEY, FIX, LOG = int(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
 EJS = sys.argv[6] if len(sys.argv) > 6 else '/nonexistent'
+HLS_MASTER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'hls', 'master.m3u8')
 lock = threading.Lock()
 count = [0]
 VISITOR = json.load(open(FIX + '/visitor.json'))['responseContext']['visitorData']
@@ -57,7 +58,10 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         host = self.headers.get('Host')
         self.record({'method': 'GET', 'path': self.path, 'host': host})
-        if host == 'i.ytimg.com' and self.path.endswith('/mqdefault.jpg'):
+        if host == 'manifest.googlevideo.com' and self.path.startswith('/api/manifest/hls_variant/'):
+            # the HLS master playlist (a synthetic one in YouTube's form)
+            self.send_body(200, open(HLS_MASTER, 'rb').read(), 'application/vnd.apple.mpegurl')
+        elif host == 'i.ytimg.com' and self.path.endswith('/mqdefault.jpg'):
             self.send_body(200, fixture('thumb.jpg'), 'image/jpeg')
         elif host == 'www.youtube.com' and self.path == '/iframe_api':
             self.send_body(200, fixture('iframe_api.js'), 'text/javascript')

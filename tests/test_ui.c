@@ -299,7 +299,7 @@ static char *load (const char *name, size_t *len)
   return b;
 }
 
-static int iframe_requests, playerjs_requests, tv_requests, manifest_requests;
+static int iframe_requests, playerjs_requests, tv_requests, manifest_requests, hls_requests, hls_broken;
 
 static void answer (fconn *c, const char *req)
 {
@@ -324,6 +324,17 @@ static void answer (fconn *c, const char *req)
       body = strdup ("404: Not Found");
       len = strlen (body);
       code = 404;
+    }
+  else if (strstr (req, "Host: manifest.googlevideo.com"))
+    {
+      hls_requests++;                                /* YouTube's HLS master playlist */
+      if (hls_broken)
+        {
+          body = strdup ("<html>gone</html>");
+          len = strlen (body);
+        }
+      else
+        body = load ("../hls/master.m3u8", &len);
     }
   else if (!strncmp (req, "GET ", 4))
     {
@@ -501,6 +512,7 @@ int main (int argc, char **argv)
   setenv ("Alias$Reel", "/<Reel$Dir> %*0", 1);
 
   CHECK (ui_init () == 0, "starts");
+  yt_config_set ("stream_format", "dash");     /* (HLS has its own part, near the end) */
   CHECK (iconbar_icons == 1 && nwins == 3, "an icon bar icon and three windows");
   /* the Info box: four labels and four values; Version says which */
   {
@@ -813,6 +825,30 @@ int main (int argc, char **argv)
     sel[0] = 0;
     click (2, 5, 0, 0, 4);
     ui_event (9, sel);
+  }
+
+  /* HLS (the default): the master playlist, then the 720p H.264 variant
+     (30 a second) and its default sound, given to Reel like DASH's pair */
+  {
+    const char *expect_q = "720p";
+    yt_config_set ("stream_format", "hls");
+    hls_requests = 0;
+    started[0] = 0;
+    click_tile (1, 100, 100, 4);
+    pump ();
+    CHECK (hls_requests == 1, "HLS: the master playlist fetched");
+    CHECK (saved_data && strstr (saved_data, "/itag/232/") && strstr (saved_data, "itag%3D140/playlist")
+           && !strstr (saved_data, "lang%3Dde") && strstr (saved_data, "\"protocol\":\"m3u8_native\"")
+           && !strstr (saved_data, "itag=136"), "HLS: the 720p variant and the default sound");
+    CHECK (strstr (status (), expect_q) && started[0], "HLS: playing");
+    /* a master playlist that isn't one: the DASH streams instead */
+    hls_broken = 1;
+    started[0] = 0;
+    click_tile (1, 100, 100, 4);
+    pump ();
+    CHECK (hls_requests == 2 && saved_data && strstr (saved_data, "itag=136") && !strstr (saved_data, "m3u8_native")
+           && started[0], "HLS unusable: DASH");
+    hls_broken = 0;
   }
 
   /* Reel not known: said so, nothing started */

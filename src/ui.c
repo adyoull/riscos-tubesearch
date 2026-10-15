@@ -1025,7 +1025,7 @@ static void play_done (yt_play *pl, const char *err, void *ctx)
     }
   if (fail (start_task (cmd, NULL)))
     return;
-  set_status ("Playing %dp%s in Reel", pl->quality, pl->hls_url ? " (live)" : "");
+  set_status ("Playing %dp%s in Reel", pl->quality, pl->live ? " (live)" : "");
 }
 
 static void play (const yt_item *it)

@@ -42,8 +42,15 @@ and Quit.
 
 Quality (on the menus) is the tallest video asked for: 360p, 480p,
 720p or 1080p (the default). TubeSearch asks YouTube for H.264 video, which
-the Pi decodes in hardware up to 1080p, and AAC sound. Live streams are
-played from YouTube's HLS playlists.
+the Pi decodes in hardware up to 1080p, and AAC sound. At the same height
+it takes 30 frames a second rather than 60.
+
+Videos are played as HLS: YouTube's playlists of short pieces, each
+fetched on its own. YouTube can slow down, or refuse part way, the two
+long streams it otherwise gives (DASH), which shows as buffering or
+"forbidden" in Reel. If HLS ever gives trouble, stream_format = dash in
+Config goes back to those. Either way Reel gets the video and the sound
+separately, as yt-dlp would give them.
 
 Reel is given a small file in <Wimp$ScrapDir> (TubeSearchPlay1 to 4) in the
 same form as yt-dlp's -j output: the title, the two addresses and the

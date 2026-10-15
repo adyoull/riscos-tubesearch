@@ -113,6 +113,8 @@ typedef struct {
   char *hls_url;            /* an HLS playlist (live streams), or NULL */
   int quality;              /* the video's lines (720, 1080...), 0 unknown */
   char codec[32];
+  int live;                 /* a live stream */
+  int hls;                  /* video_url (and audio_url) are HLS playlists (yt_hls_choose) */
   /* The TV client's addresses carry challenges that YouTube's JavaScript
      answers (jsolve.h): a scrambled signature (s, added back as the
      parameter sp) and an "n" value. NULL when there is none. */
@@ -136,6 +138,31 @@ int yt_parse_player (const char *json, size_t len, int maxq, yt_play *p, char *e
    (the video is unavailable, private, removed...). */
 extern int yt_player_final;
 void yt_play_free (yt_play *p);
+
+/* ---- HLS ---------------------------------------------------------------
+
+   YouTube's player answer also gives an HLS master playlist (hls_url).
+   Played as HLS, a video comes in short pieces, each its own request,
+   where the two long DASH streams can be slowed down or refused part way
+   (Chris, ROOL forum, 2026-10-15: yt-dlp's HLS formats play smoothly when
+   its DASH ones don't). Config: stream_format = hls (the default) | dash. */
+
+/* 1 if hls is to be used for p (Config's stream_format, or a live stream). */
+int yt_want_hls (const yt_play *p);
+
+/* From a master playlist (its text, and its own address for relative
+   names): the H.264 variant no taller than maxq lines (the tallest; at the
+   same height 30 frames a second or less, then the most bits), and its
+   sound when the variant has a separate AUDIO group (the default one).
+   *video and *audio (NULL when the sound is in the video) are malloc'd
+   media-playlist addresses; *quality the lines; codec the variant's H.264
+   codec. 0, or -1 with the reason in err. */
+int yt_hls_choose (const char *m3u8, size_t len, const char *base_url, int maxq,
+                   char **video, char **audio, int *quality, char *codec, size_t codecsize,
+                   char *err, size_t errlen);
+
+/* Splits an https address into host and path (for http_get). 0, or -1. */
+int yt_split_url (const char *url, char *host, size_t hostsize, char *path, size_t pathsize);
 
 /* What Reel reads: yt-dlp's -j JSON (title, the addresses, and the
    headers). malloc'd. */

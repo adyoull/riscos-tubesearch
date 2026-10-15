@@ -31,6 +31,7 @@ static setting settings[] = {
   { "consent_cookie", "SOCS=CAE=", NULL },
   { "channel_videos_params", "EgZ2aWRlb3PyBgQKAjoA", NULL },
   { "max_quality", "1080", NULL },
+  { "stream_format", "hls", NULL },           /* hls, dash (yt.h) */
   { "search_date", "any", NULL },             /* any, today, week, month, year */
   /* the fallback when the player client gives nothing playable: yt-dlp
      2026-10-10's default client, tv_samsung (needs the player's JavaScript) */
@@ -1227,6 +1228,7 @@ int yt_parse_player (const char *json, size_t len, int maxq, yt_play *p, char *e
     }
   if (j_pstr (root, "videoDetails.title"))
     p->title = strdup (j_pstr (root, "videoDetails.title"));
+  p->live = j_true (j_path (root, "videoDetails.isLive"));
   sd = j_get (root, "streamingData");
   hls = j_str (j_get (sd, "hlsManifestUrl"));
   af = j_get (sd, "adaptiveFormats");
@@ -1282,9 +1284,9 @@ int yt_parse_player (const char *json, size_t len, int maxq, yt_play *p, char *e
           snprintf (p->codec, sizeof p->codec, "%.*s", (int) (l < sizeof p->codec ? l : sizeof p->codec - 1), c + 8);
         }
     }
-  else if (hls)
-    p->hls_url = strdup (hls);
-  else
+  if (hls)
+    p->hls_url = strdup (hls);                /* (as well: yt_want_hls decides) */
+  if (!p->video_url && !hls)
     {
       /* the old muxed formats (360p H.264 + AAC in one file) */
       const jnode *fm = j_get (sd, "formats");
@@ -1326,6 +1328,237 @@ void yt_play_free (yt_play *p)
   memset (p, 0, sizeof *p);
 }
 
+/* ---- HLS ---------------------------------------------------------------- */
+
+int yt_want_hls (const yt_play *p)
+{
+  return p->hls_url && (p->live || !p->video_url || !strcmp (CFG ("stream_format"), "hls"));
+}
+
+int yt_split_url (const char *url, char *host, size_t hostsize, char *path, size_t pathsize)
+{
+  const char *h, *s;
+  if (strncmp (url, "https://", 8))
+    return -1;
+  h = url + 8;
+  s = h + strcspn (h, "/?#");
+  if (s == h || (size_t) (s - h) >= hostsize || strlen (s) + 2 > pathsize)
+    return -1;
+  snprintf (host, hostsize, "%.*s", (int) (s - h), h);
+  snprintf (path, pathsize, "%s%s", *s == '/' ? "" : "/", s);
+  return 0;
+}
+
+/* The value of attribute name in an EXT-X tag's attribute list (quotes
+   removed), into out. 1 if it's there. */
+static int hls_attr (const char *list, size_t n, const char *name, char *out, size_t size)
+{
+  size_t nl = strlen (name), i = 0;
+  while (i < n)
+    {
+      size_t k = i, v, e;
+      while (k < n && list[k] != '=' && list[k] != ',')
+        k++;
+      if (k >= n || list[k] != '=')
+        {
+          i = k + 1;
+          continue;
+        }
+      v = k + 1;
+      if (v < n && list[v] == '"')
+        {
+          e = v + 1;
+          while (e < n && list[e] != '"')
+            e++;
+          if (k - i == nl && !strncmp (list + i, name, nl))
+            {
+              snprintf (out, size, "%.*s", (int) (e - v - 1), list + v + 1);
+              return 1;
+            }
+          i = e < n ? e + 1 : n;
+        }
+      else
+        {
+          e = v;
+          while (e < n && list[e] != ',')
+            e++;
+          if (k - i == nl && !strncmp (list + i, name, nl))
+            {
+              snprintf (out, size, "%.*s", (int) (e - v), list + v);
+              return 1;
+            }
+          i = e;
+        }
+      if (i < n && list[i] == ',')
+        i++;
+    }
+  return 0;
+}
+
+/* name (n bytes) resolved against base (malloc'd). */
+static char *hls_resolve (const char *base, const char *name, size_t n)
+{
+  sb b = { 0 };
+  if (n >= 8 && (!strncmp (name, "https://", 8) || !strncmp (name, "http://", 7)))
+    sb_add (&b, name, n);
+  else if (base && !strncmp (base, "https://", 8))
+    {
+      const char *host_end = base + 8 + strcspn (base + 8, "/?#");
+      if (*name == '/')
+        sb_add (&b, base, (size_t) (host_end - base));
+      else
+        {
+          const char *q = host_end + strcspn (host_end, "?#"), *slash = q;
+          while (slash > host_end && slash[-1] != '/')
+            slash--;
+          if (slash == host_end)
+            {
+              sb_add (&b, base, (size_t) (host_end - base));
+              sb_str (&b, "/");
+            }
+          else
+            sb_add (&b, base, (size_t) (slash - base));
+        }
+      sb_add (&b, name, n);
+    }
+  else
+    return NULL;
+  return sb_done (&b);
+}
+
+int yt_hls_choose (const char *m3u8, size_t len, const char *base_url, int maxq,
+                   char **video, char **audio, int *quality, char *codec, size_t codecsize,
+                   char *err, size_t errlen)
+{
+  /* the audio renditions, and the best variant so far */
+  struct { char group[64]; const char *uri; size_t urilen; int dflt; } aud[24];
+  int na = 0, have = 0, best_q = 0, best_fps = 0;
+  long best_bw = 0;
+  const char *best_uri = NULL;
+  size_t best_urilen = 0;
+  char best_group[64] = "", best_codec[64] = "";
+  const char *p = m3u8, *end = m3u8 + len;
+  const char *pending = NULL;                   /* an EXT-X-STREAM-INF waiting for its line */
+  size_t pending_len = 0;
+
+  *video = *audio = NULL;
+  if (len < 7 || strncmp (m3u8, "#EXTM3U", 7))
+    {
+      snprintf (err, errlen, "YouTube's HLS playlist wasn't one");
+      return -1;
+    }
+  while (p < end)
+    {
+      const char *a = p, *e = memchr (p, '\n', (size_t) (end - p)), *b;
+      if (!e)
+        e = end;
+      b = e;
+      p = e < end ? e + 1 : end;
+      while (b > a && (b[-1] == '\r' || b[-1] == ' '))
+        b--;
+      if (a == b)
+        continue;
+      if (b - a > 13 && !strncmp (a, "#EXT-X-MEDIA:", 13))
+        {
+          const char *l = a + 13;
+          size_t n = (size_t) (b - l);
+          char t[16], g[64], u[8], d[8];
+          const char *uq;
+          if (na < 24 && hls_attr (l, n, "TYPE", t, sizeof t) && !strcmp (t, "AUDIO")
+              && hls_attr (l, n, "GROUP-ID", g, sizeof g) && hls_attr (l, n, "URI", u, sizeof u)
+              && (uq = strstr (l, "URI=\"")) && uq < b)
+            {
+              const char *q2 = memchr (uq + 5, '"', (size_t) (b - uq - 5));
+              if (q2)
+                {
+                  snprintf (aud[na].group, sizeof aud[na].group, "%s", g);
+                  aud[na].uri = uq + 5;
+                  aud[na].urilen = (size_t) (q2 - uq - 5);
+                  aud[na].dflt = hls_attr (l, n, "DEFAULT", d, sizeof d) && !strcmp (d, "YES");
+                  na++;
+                }
+            }
+          continue;
+        }
+      if (b - a > 18 && !strncmp (a, "#EXT-X-STREAM-INF:", 18))
+        {
+          pending = a + 18;
+          pending_len = (size_t) (b - pending);
+          continue;
+        }
+      if (*a == '#')
+        continue;
+      if (pending)
+        {
+          char codecs[160], res[32], fr[16], bw[24], g[64] = "";
+          const char *c;
+          int w = 0, h = 0, q, fps;
+          long rate;
+          if (hls_attr (pending, pending_len, "CODECS", codecs, sizeof codecs) && (c = strstr (codecs, "avc1"))
+              && hls_attr (pending, pending_len, "RESOLUTION", res, sizeof res) && sscanf (res, "%dx%d", &w, &h) == 2)
+            {
+              q = w < h ? w : h;
+              fps = hls_attr (pending, pending_len, "FRAME-RATE", fr, sizeof fr) ? (int) (atof (fr) + 0.5) : 30;
+              rate = hls_attr (pending, pending_len, "BANDWIDTH", bw, sizeof bw) ? atol (bw) : 0;
+              hls_attr (pending, pending_len, "AUDIO", g, sizeof g);
+              /* the tallest no taller than maxq (if all are taller, the
+                 smallest); at the same height 30 a second or less, then
+                 the most bits */
+              int better = !have
+                || (q <= maxq && (best_q > maxq || q > best_q))
+                || (q > maxq && best_q > maxq && q < best_q)
+                || (q == best_q && ((fps <= 30) > (best_fps <= 30)
+                                    || ((fps <= 30) == (best_fps <= 30) && rate > best_bw)));
+              if (better)
+                {
+                  size_t cl = strcspn (c, ",");
+                  have = 1;
+                  best_q = q;
+                  best_fps = fps;
+                  best_bw = rate;
+                  best_uri = a;
+                  best_urilen = (size_t) (b - a);
+                  snprintf (best_group, sizeof best_group, "%s", g);
+                  snprintf (best_codec, sizeof best_codec, "%.*s", (int) (cl < sizeof best_codec ? cl : sizeof best_codec - 1), c);
+                }
+            }
+          pending = NULL;
+        }
+    }
+  if (!have)
+    {
+      snprintf (err, errlen, "YouTube's HLS playlist has no H.264 video");
+      return -1;
+    }
+  if (best_group[0])
+    {
+      int pick = -1;
+      for (int i = 0; i < na; i++)
+        if (!strcmp (aud[i].group, best_group) && (pick < 0 || (aud[i].dflt && !aud[pick].dflt)))
+          pick = i;
+      if (pick < 0)
+        {
+          snprintf (err, errlen, "YouTube's HLS playlist has no sound for its video");
+          return -1;
+        }
+      if (!(*audio = hls_resolve (base_url, aud[pick].uri, aud[pick].urilen)))
+        {
+          snprintf (err, errlen, "YouTube's HLS playlist has an address TubeSearch can't use");
+          return -1;
+        }
+    }
+  if (!(*video = hls_resolve (base_url, best_uri, best_urilen)))
+    {
+      free (*audio);
+      *audio = NULL;
+      snprintf (err, errlen, "YouTube's HLS playlist has an address TubeSearch can't use");
+      return -1;
+    }
+  *quality = best_q;
+  snprintf (codec, codecsize, "%s", best_codec);
+  return 0;
+}
+
 char *yt_reel_json (const yt_play *p, const char *video_id)
 {
   sb b = { 0 };
@@ -1341,10 +1574,12 @@ char *yt_reel_json (const yt_play *p, const char *video_id)
       sb_quote (&b, p->video_url);
       sb_str (&b, ",\"vcodec\":");
       sb_quote (&b, p->codec[0] ? p->codec : "avc1");
+      sb_str (&b, p->hls ? ",\"protocol\":\"m3u8_native\"" : "");
       sb_str (&b, ",\"acodec\":\"none\",\"http_headers\":{\"User-Agent\":");
       sb_quote (&b, CFG ("media_user_agent"));
       sb_str (&b, "}},{\"url\":");
       sb_quote (&b, p->audio_url);
+      sb_str (&b, p->hls ? ",\"protocol\":\"m3u8_native\"" : "");
       sb_str (&b, ",\"vcodec\":\"none\",\"acodec\":\"mp4a.40.2\",\"http_headers\":{\"User-Agent\":");
       sb_quote (&b, CFG ("media_user_agent"));
       sb_str (&b, "}}]");

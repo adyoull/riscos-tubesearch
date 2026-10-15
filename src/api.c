@@ -20,7 +20,7 @@ enum { OP_LIST, OP_PLAY };
 enum { V_NONE, V_ASKING, V_DONE };
 /* a play: the player client, then (if it gives nothing playable) the TV
    client: the player's ID, its JavaScript, the TV answer, the solve */
-enum { P_PLAYER, P_IFRAME, P_PLAYERJS, P_TV, P_SOLVE };
+enum { P_PLAYER, P_IFRAME, P_PLAYERJS, P_TV, P_SOLVE, P_HLS };
 
 struct api_op {
   api_op *next;               /* while waiting for the visitor ID */
@@ -99,6 +99,64 @@ static void play_finish (api_op *op, yt_play *p, const char *err)
     }
   op->play_cb (p, p ? NULL : err, op->ctx);
   free_op (op);
+}
+
+/* The player client's streams: as HLS when that's wanted (yt_want_hls),
+   which needs the master playlist first; otherwise as they are. */
+static void hls_done (http_req *r, void *ctx);
+static void deliver (api_op *op, yt_play *p)
+{
+  char host[128], path[2048];
+  if (p != &op->tv)
+    {
+      yt_play_free (&op->tv);
+      op->tv = *p;                               /* (op owns the streams now) */
+      memset (p, 0, sizeof *p);
+    }
+  if (yt_want_hls (&op->tv) && !yt_split_url (op->tv.hls_url, host, sizeof host, path, sizeof path))
+    {
+      static char headers[400];
+      snprintf (headers, sizeof headers, "User-Agent: %s\r\n", yt_config_get ("media_user_agent"));
+      op->state = P_HLS;
+      if ((op->req = http_get (host, path, headers, TAG_API, hls_done, op)))
+        return;
+    }
+  play_finish (op, &op->tv, NULL);
+}
+
+static void hls_done (http_req *r, void *ctx)
+{
+  api_op *op = ctx;
+  size_t len;
+  const char *body = http_body (r, &len);
+  char *v = NULL, *a = NULL, codec[32], err[200];
+  int q = 0;
+  op->req = NULL;
+  dump ("hls", body, len);
+  if (http_status (r) == 200
+      && !yt_hls_choose (body, len, op->tv.hls_url, op->maxq, &v, &a, &q, codec, sizeof codec, err, sizeof err))
+    {
+      free (op->tv.video_url);
+      free (op->tv.audio_url);
+      op->tv.video_url = v;
+      op->tv.audio_url = a;
+      op->tv.quality = q;
+      op->tv.hls = 1;
+      snprintf (op->tv.codec, sizeof op->tv.codec, "%s", codec);
+    }
+  /* (otherwise the DASH streams, or for a live stream the master playlist itself) */
+  else if (!op->tv.live && op->tv.video_url && op->tv.audio_url)
+    {
+      free (op->tv.hls_url);
+      op->tv.hls_url = NULL;
+    }
+  else
+    {
+      free (op->tv.video_url);
+      free (op->tv.audio_url);
+      op->tv.video_url = op->tv.audio_url = NULL;
+    }
+  play_finish (op, &op->tv, NULL);
 }
 
 static int tv_allowed (void)
@@ -267,9 +325,7 @@ static void play_http_done (http_req *r, void *ctx)
         {
           if (!yt_play_needs_solving (&p))
             {
-              op->play_cb (&p, NULL, op->ctx);
-              yt_play_free (&p);
-              free_op (op);
+              deliver (op, &p);
               return;
             }
           yt_play_free (&p);

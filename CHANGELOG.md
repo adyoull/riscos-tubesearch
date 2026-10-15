@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.0-rc5 (2026-10-15): HLS, for smooth playing
+
+- Videos are played as HLS by default: TubeSearch fetches YouTube's HLS
+  master playlist and gives Reel the H.264 variant no taller than the
+  chosen quality (30 frames a second preferred at the same height) and its
+  default sound, as two media playlists. YouTube can slow down, or refuse
+  part way, its long DASH streams, which showed as buffering or "access
+  denied" in Reel; HLS is many short requests. Suggested by Chris, who
+  found yt-dlp's HLS formats play smoothly where its DASH ones don't.
+- Config: stream_format = hls (default) | dash. Live streams are always
+  HLS (now the right variant, not the whole master playlist). If the HLS
+  playlist can't be used, the DASH streams are, as before. Videos that
+  need the TV-app fallback are still played as DASH.
+- tscli play says (HLS) or (DASH).
+
 ## 0.2.0-rc4 (2026-10-13): less address space
 
 - A dynamic area reserves its whole maximum of logical address space as

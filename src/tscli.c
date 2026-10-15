@@ -84,7 +84,7 @@ static void play_done (yt_play *p, const char *err, void *ctx)
   else
     {
       fprintf (stderr, "%s: %dp %s%s%s\n", p->title ? p->title : id, p->quality, p->codec,
-               p->audio_url ? " + AAC" : "", p->hls_url ? " (HLS)" : "");
+               p->audio_url ? " + AAC" : "", p->live ? " (live, HLS)" : p->hls ? " (HLS)" : " (DASH)");
       out_json = yt_reel_json (p, id);
     }
   finished = 1;

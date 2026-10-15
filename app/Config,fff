@@ -6,8 +6,16 @@
 # values from yt-dlp (yt_dlp/extractor/youtube/_base.py, the VISIONOS
 # client) or NewPipe can be put here without a new TubeSearch.
 #
+# Quality, Frame rate, Sound and Uploaded on the menus are saved, as you
+# choose them, in Choices:TubeSearch.Choices, which is read after this
+# file: a choice made there wins over the lines below.
+#
 # The tallest video to ask for (lines): 360, 480, 720 or 1080.
 max_quality = 1080
+
+# The most frames a second to ask for: 30 or 60. (If a video only has
+# faster ones at your Quality, the slowest of those.)
+max_fps = 30
 
 # How the video is played:
 #   hls   YouTube's HLS playlists: short pieces, each its own request

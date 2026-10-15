@@ -530,8 +530,9 @@ int main (int argc, char **argv)
   {
     const int *m = (const int *) last_menu;          /* title 3 words, colours, width, height, gap; items of 6 words */
     CHECK (m && !strcmp ((const char *) &m[7 + 3], "Info") && m[7 + 1] == 3, "Info's submenu is the Info box");
-    CHECK (m && !strcmp ((const char *) &m[7 + 4 * 6 + 3], "Quit") && (m[7 + 4 * 6] & 0x80), "Quit is last");
-    CHECK (m && !strcmp ((const char *) &m[7 + 3 * 6 + 3], "Sound"), "Sound before it");
+    CHECK (m && !strcmp ((const char *) &m[7 + 5 * 6 + 3], "Quit") && (m[7 + 5 * 6] & 0x80), "Quit is last");
+    CHECK (m && !strcmp ((const char *) &m[7 + 4 * 6 + 3], "Sound"), "Sound before it");
+    CHECK (m && !strcmp ((const char *) &m[7 + 3 * 6 + 3], "Frame rate"), "Frame rate before that");
     menus_made = 0;
   }
 
@@ -644,6 +645,34 @@ int main (int argc, char **argv)
     click_tile (3, 100, 100, 4);
     pump ();
     CHECK (saved_data && strstr (saved_data, "itag=136") && !strstr (saved_data, "itag=137"), "720p after choosing it");
+  }
+  /* the choices are kept: written to Choices:TubeSearch.Choices, and read
+     back (as at the next start) over Config's */
+  {
+    char path[600], text[600] = "";
+    FILE *f;
+    int sel[4] = { 5, 1, -1, -1 };              /* ... Quality, Frame rate > 60 a second */
+    size_t n;
+    click_tile (3, 100, 100, 2);
+    ui_event (9, sel);
+    CHECK (!strcmp (yt_config_get ("max_fps"), "60"), "Frame rate > 60 a second");
+    snprintf (path, sizeof path, "%s.TubeSearch.Choices", getenv ("Choices$Write"));
+    if ((f = fopen (path, "r")))
+      {
+        n = fread (text, 1, sizeof text - 1, f);
+        text[n] = 0;
+        fclose (f);
+      }
+    CHECK (strstr (text, "max_quality = 720\n") && strstr (text, "max_fps = 60\n") && strstr (text, "audio_language = mine\n")
+           && strstr (text, "search_date = any\n"), "the choices file");
+    yt_config_set ("max_quality", "1080");
+    yt_config_set ("max_fps", "30");
+    CHECK (yt_config_load (path) == 4 && !strcmp (yt_config_get ("max_quality"), "720")
+           && !strcmp (yt_config_get ("max_fps"), "60"), "read back at the next start");
+    click_tile (3, 100, 100, 2);
+    sel[1] = 0;                                  /* Frame rate > 30 a second */
+    ui_event (9, sel);
+    CHECK (!strcmp (yt_config_get ("max_fps"), "30"), "and back to 30");
   }
 
   /* a narrower window: two across, a taller extent */
@@ -851,8 +880,8 @@ int main (int argc, char **argv)
     click_tile (1, 100, 100, 2);
     {
       const int *m = (const int *) last_menu;
-      int sel[4] = { 5, 1, -1, -1 };            /* Play, Related, Channel, Back, Quality, Sound > Original */
-      CHECK (m && !strcmp ((const char *) &m[7 + 5 * 6 + 3], "Sound") && (m[7 + 5 * 6] & 0x80), "the Sound menu, last");
+      int sel[4] = { 6, 1, -1, -1 };            /* Play, Related, Channel, Back, Quality, Frame rate, Sound > Original */
+      CHECK (m && !strcmp ((const char *) &m[7 + 6 * 6 + 3], "Sound") && (m[7 + 6 * 6] & 0x80), "the Sound menu, last");
       ui_event (9, sel);
     }
     CHECK (!strcmp (yt_config_get ("audio_language"), "original"), "Sound > Original chosen");

@@ -31,6 +31,7 @@ static setting settings[] = {
   { "consent_cookie", "SOCS=CAE=", NULL },
   { "channel_videos_params", "EgZ2aWRlb3PyBgQKAjoA", NULL },
   { "max_quality", "1080", NULL },
+  { "max_fps", "30", NULL },                  /* the most frames a second: 30 or 60 */
   { "stream_format", "hls", NULL },           /* hls, dash (yt.h) */
   { "audio_language", "mine", NULL },         /* mine, original, or a language code (yt.h) */
   { "search_date", "any", NULL },             /* any, today, week, month, year */
@@ -972,6 +973,35 @@ int yt_parse_visitor (const char *json, size_t len)
 
 /* ---- playing ------------------------------------------------------------ */
 
+/* Is a video (q lines, fps frames a second, rate bits a second) better
+   than the best so far? Best of all: no taller than maxq and no more than
+   Config's max_fps frames a second (the tallest, then the most bits).
+   Failing that: no taller but faster (the slowest), then no faster but
+   taller (the smallest), then the smallest and slowest. */
+static int video_tier (int q, int fps, int maxq, int maxfps)
+{
+  return (q <= maxq) * 2 + (fps <= maxfps) + (q <= maxq && fps <= maxfps);
+}
+
+static int better_video (int have, int q, int fps, long rate, int bq, int bfps, long brate, int maxq)
+{
+  int maxfps = atoi (CFG ("max_fps")), t, bt;
+  if (maxfps < 1)
+    maxfps = 30;
+  if (!have)
+    return 1;
+  t = video_tier (q, fps, maxq, maxfps);
+  bt = video_tier (bq, bfps, maxq, maxfps);
+  if (t != bt)
+    return t > bt;
+  if (t == 4)                                   /* both fit: the tallest */
+    return q != bq ? q > bq : rate > brate;
+  if (t == 2)                                   /* too fast: the slowest, then the tallest */
+    return fps != bfps ? fps < bfps : q != bq ? q > bq : rate > brate;
+  /* too tall: the smallest, then the slowest */
+  return q != bq ? q < bq : fps != bfps ? fps < bfps : rate > brate;
+}
+
 static int lines_of (const jnode *f)
 {
   const char *q = j_str (j_get (f, "qualityLabel"));
@@ -1298,7 +1328,7 @@ int yt_parse_player (const char *json, size_t len, int maxq, yt_play *p, char *e
   jdoc *d = json_parse (json, len, jerr, sizeof jerr);
   const jnode *root, *ps, *sd, *af, *best_v = NULL, *best_a = NULL, *f;
   const char *status, *hls;
-  int best_q = 0, best_as = 0;
+  int best_q = 0, best_as = 0, best_fps = 0;
   long best_vb = 0, best_ab = 0;
   yt_audio aud, best_aud;
 
@@ -1354,15 +1384,12 @@ int yt_parse_player (const char *json, size_t len, int maxq, yt_play *p, char *e
             continue;
           if (!strncmp (mime, "video/mp4", 9) && strstr (mime, "avc1"))
             {
-              int q = lines_of (f);
-              /* the tallest no taller than maxq; if all are taller, the smallest */
-              int better = !best_v
-                || (q <= maxq && (best_q > maxq || q > best_q || (q == best_q && rate > best_vb)))
-                || (q > maxq && best_q > maxq && q < best_q);
-              if (better)
+              int q = lines_of (f), fps = (int) j_long (j_get (f, "fps"), 30);
+              if (better_video (best_v != NULL, q, fps, rate, best_q, best_fps, best_vb, maxq))
                 {
                   best_v = f;
                   best_q = q;
+                  best_fps = fps;
                   best_vb = rate;
                 }
             }
@@ -1622,15 +1649,7 @@ int yt_hls_choose (const char *m3u8, size_t len, const char *base_url, int maxq,
               fps = hls_attr (pending, pending_len, "FRAME-RATE", fr, sizeof fr) ? (int) (atof (fr) + 0.5) : 30;
               rate = hls_attr (pending, pending_len, "BANDWIDTH", bw, sizeof bw) ? atol (bw) : 0;
               hls_attr (pending, pending_len, "AUDIO", g, sizeof g);
-              /* the tallest no taller than maxq (if all are taller, the
-                 smallest); at the same height 30 a second or less, then
-                 the most bits */
-              int better = !have
-                || (q <= maxq && (best_q > maxq || q > best_q))
-                || (q > maxq && best_q > maxq && q < best_q)
-                || (q == best_q && ((fps <= 30) > (best_fps <= 30)
-                                    || ((fps <= 30) == (best_fps <= 30) && rate > best_bw)));
-              if (better)
+              if (better_video (have, q, fps, rate, best_q, best_fps, best_bw, maxq))
                 {
                   size_t cl = strcspn (c, ",");
                   have = 1;

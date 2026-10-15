@@ -126,7 +126,7 @@ static void print_list (const yt_list *l, int from)
 static int usage (void)
 {
   fprintf (stderr, "usage: tscli [-more N] [-dump DIR] [-config FILE] [-client C] [-ejs DIR] [-state DIR] [-work DIR]\n"
-                   "             [-date any|today|week|month|year] [-proxy URL|none] [-sound mine|original|LANG]\n"
+                   "             [-date any|today|week|month|year] [-proxy URL|none] [-sound mine|original|LANG] [-fps 30|60]\n"
                    "             search WORDS... | related ID | channel ID | play ID [LINES] [FILE]\n"
                    "             | update | [-wimp] solve JOB ANSWER\n");
   return 2;
@@ -259,6 +259,8 @@ int main (int argc, char **argv)
         proxy_override = argv[a + 1];
       else if (!strcmp (argv[a], "-sound"))
         yt_config_set ("audio_language", argv[a + 1]);
+      else if (!strcmp (argv[a], "-fps"))
+        yt_config_set ("max_fps", argv[a + 1]);
       else
         return usage ();
       a += 2;

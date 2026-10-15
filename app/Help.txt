@@ -30,20 +30,26 @@ In the window:
   Select on a channel   (in search results) its videos
   More (the last tile)  fetches the next part of the list
   Back                  the page before (up to 24 are kept)
-  Menu                  Play, Related, Channel, Back, Quality and Sound
+  Menu                  Play, Related, Channel, Back, Quality, Frame rate
+                        and Sound
 
 Beside Search, the Uploaded filter (click it, or its menu button) limits
 searches to videos uploaded Today, This week, This month or This year, or
 Any time. Changing it searches again with the same words; Back returns to
 the results before. Config's search_date sets where it starts.
 
-Menu on the icon bar icon has Info (the version), Search..., Quality
-and Quit.
+Menu on the icon bar icon has Info (the version), Search..., Quality,
+Frame rate, Sound and Quit.
 
 Quality (on the menus) is the tallest video asked for: 360p, 480p,
-720p or 1080p (the default). TubeSearch asks YouTube for H.264 video, which
-the Pi decodes in hardware up to 1080p, and AAC sound. At the same height
-it takes 30 frames a second rather than 60.
+720p or 1080p (the default). Frame rate is the most frames a second: 30
+(the default) or 60. TubeSearch asks YouTube for H.264 video, which the
+Pi decodes in hardware up to 1080p, and AAC sound. If a video has nothing
+within both, it keeps to the Quality and takes the slowest frame rate.
+
+Quality, Frame rate, Sound and the Uploaded filter are remembered: they're
+saved in Choices:TubeSearch.Choices as you choose them, and used the next
+time TubeSearch starts (over the Config file's settings).
 
 Many videos now have dubbed sound tracks besides the original (YouTube
 adds some itself). Sound on the menus chooses: My language plays the
@@ -141,6 +147,7 @@ and find faults (and the JavaScript helper):
   tscli -date week search ...   search with the Uploaded filter
   tscli -proxy <URL>|none ...   a proxy instead of http_proxy
   tscli -sound original ...     the sound track: mine, original or a language
+  tscli -fps 60 ...             the most frames a second
 
 Licence
 -------

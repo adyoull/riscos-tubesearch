@@ -444,11 +444,46 @@ static void test_hls (void)
   CHECK (yt_hls_choose (m, len, base, 4000, &v, &a, &q, codec, sizeof codec, &ai, err, sizeof err) == 0 && q == 1080);
   free (v); free (a);                                                         /* (never VP9) */
   /* a live stream's: the sound in the video; names from the server's root */
+  /* (its 1080p is 60 a second: at most 30 gives the 720p) */
+  CHECK (yt_hls_choose (live, llen, base, 1080, &v, &a, &q, codec, sizeof codec, &ai, err, sizeof err) == 0
+         && !a && q == 720 && strstr (v, "/itag/95/"));
+  free (v);
+  yt_config_set ("max_fps", "60");
   CHECK (yt_hls_choose (live, llen, base, 1080, &v, &a, &q, codec, sizeof codec, &ai, err, sizeof err) == 0);
   CHECK (!a && q == 1080 && !strcmp (v, "https://manifest.googlevideo.com/api/manifest/hls_playlist/id/live/itag/301/playlist/index.m3u8"));
   free (v);
+  /* up to 60: the 720p60 (more bits) rather than the 720p30 */
+  CHECK (yt_hls_choose (m, len, base, 720, &v, &a, &q, codec, sizeof codec, &ai, err, sizeof err) == 0 && strstr (v, "/itag/311/"));
+  free (v); free (a);
+  yt_config_set ("max_fps", "30");
   CHECK (yt_hls_choose (live, llen, base, 720, &v, &a, &q, codec, sizeof codec, &ai, err, sizeof err) == 0 && strstr (v, "/itag/95/"));
   free (v);
+  {
+    /* only 60 a second, and a cap of 30: the lowest there is */
+    const char *all60 = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1,CODECS=\"avc1.4d401f\",RESOLUTION=1280x720,FRAME-RATE=60\nhttps://x/60.m3u8\n"
+      "#EXT-X-STREAM-INF:BANDWIDTH=1,CODECS=\"avc1.4d401f\",RESOLUTION=1280x720,FRAME-RATE=50\nhttps://x/50.m3u8\n";
+    CHECK (yt_hls_choose (all60, strlen (all60), base, 1080, &v, &a, &q, codec, sizeof codec, &ai, err, sizeof err) == 0 && strstr (v, "/50."));
+    free (v);
+  }
+  {
+    /* DASH: frame rates from the formats' fps */
+    yt_play p;
+    const char *j = "{\"playabilityStatus\":{\"status\":\"OK\"},\"streamingData\":{\"adaptiveFormats\":["
+      "{\"itag\":299,\"mimeType\":\"video/mp4; codecs=\\\"avc1.64002a\\\"\",\"qualityLabel\":\"1080p60\",\"fps\":60,\"bitrate\":9,\"url\":\"https://v/299\"},"
+      "{\"itag\":137,\"mimeType\":\"video/mp4; codecs=\\\"avc1.640028\\\"\",\"qualityLabel\":\"1080p\",\"fps\":30,\"bitrate\":5,\"url\":\"https://v/137\"},"
+      "{\"itag\":298,\"mimeType\":\"video/mp4; codecs=\\\"avc1.4d4020\\\"\",\"qualityLabel\":\"720p60\",\"fps\":60,\"bitrate\":4,\"url\":\"https://v/298\"},"
+      "{\"itag\":140,\"mimeType\":\"audio/mp4; codecs=\\\"mp4a.40.2\\\"\",\"bitrate\":1,\"url\":\"https://a/140\"}]}}";
+    CHECK (yt_parse_player (j, strlen (j), 1080, &p, err, sizeof err) == 0 && strstr (p.video_url, "/137"));
+    yt_play_free (&p);
+    yt_config_set ("max_fps", "60");
+    CHECK (yt_parse_player (j, strlen (j), 1080, &p, err, sizeof err) == 0 && strstr (p.video_url, "/299"));
+    yt_play_free (&p);
+    CHECK (yt_parse_player (j, strlen (j), 720, &p, err, sizeof err) == 0 && strstr (p.video_url, "/298"));
+    yt_play_free (&p);
+    yt_config_set ("max_fps", "30");
+    CHECK (yt_parse_player (j, strlen (j), 720, &p, err, sizeof err) == 0 && strstr (p.video_url, "/298"));  /* (no 720p30: 720p60) */
+    yt_play_free (&p);
+  }
   {
     const char *rel = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1,CODECS=\"avc1.4d401f,mp4a.40.2\",RESOLUTION=1280x720\r\nsub/index.m3u8\r\n";
     CHECK (yt_hls_choose (rel, strlen (rel), "https://h.example/a/b/master.m3u8?x=1", 1080, &v, &a, &q, codec, sizeof codec, &ai, err, sizeof err) == 0

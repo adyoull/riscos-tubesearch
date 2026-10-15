@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.0-rc7 (2026-10-15): a frame rate limit, and choices that stick
+
+- Frame rate on the menus: 30 a second (the default) or 60 (Config
+  max_fps; tscli -fps). Within both Quality and Frame rate, the tallest;
+  if a video only has faster ones at that Quality, the slowest of those.
+  DASH and HLS choose the same way (rc5/rc6's HLS only preferred 30 at the
+  same height; DASH ignored frame rates).
+- Quality, Frame rate, Sound and the Uploaded filter are saved in
+  Choices:TubeSearch.Choices as they're chosen and read at the next start,
+  after the Config files (before, choosing 720p was forgotten).
+
 ## 0.2.0-rc6 (2026-10-15): the right sound track
 
 - Videos with dubbed tracks (YouTube's auto-dubbing adds many) could start

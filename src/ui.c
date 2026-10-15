@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <kernel.h>
 #include <swis.h>
 #include "ui.h"
@@ -1052,9 +1053,73 @@ static void play (const yt_item *it)
 /* ---- menus -------------------------------------------------------------- */
 
 typedef struct { int flags, submenu, icon_flags; int data[3]; } menu_item;
-typedef struct { char title[12]; unsigned char colours[4]; int width, height, gap; menu_item item[6]; } menu_block;
+typedef struct { char title[12]; unsigned char colours[4]; int width, height, gap; menu_item item[8]; } menu_block;
 
-static menu_block quality_menu, bar_menu, tile_menu, date_menu, sound_menu;
+static menu_block quality_menu, bar_menu, tile_menu, date_menu, sound_menu, fps_menu;
+
+static void menu_init (menu_block *m, const char *title, int width);
+static void menu_add (menu_block *m, int i, const char *text, int submenu, int flags);
+
+/* ---- the menus' choices, kept ---------------------------------------------
+
+   Quality, Frame rate, Sound and Uploaded are written to
+   <Choices$Write>.TubeSearch.Choices whenever one changes, and read after
+   the Config files when TubeSearch starts, so they win over them. */
+static void choices_path (char *out, size_t size)
+{
+  const char *c = getenv ("Choices$Write");
+  if (!c)
+    {
+      out[0] = 0;
+      return;
+    }
+  snprintf (out, size, "%s.TubeSearch", c);
+  mkdir (out, 0777);
+  snprintf (out, size, "%s.TubeSearch.Choices", c);
+}
+
+static void save_choices (void)
+{
+  char path[300];
+  FILE *f;
+  choices_path (path, sizeof path);
+  if (!path[0] || !(f = fopen (path, "w")))
+    return;
+  fprintf (f, "# TubeSearch's menu choices, saved as you make them (read after Config)\n"
+           "max_quality = %d\nmax_fps = %s\naudio_language = %s\nsearch_date = %s\n",
+           quality, yt_config_get ("max_fps"), yt_config_get ("audio_language"), yt_date_word (search_date));
+  fclose (f);
+}
+
+static void set_quality (int i)
+{
+  static const int q[4] = { 360, 480, 720, 1080 };
+  char v[8];
+  if (i < 0 || i > 3)
+    return;
+  quality = q[i];
+  snprintf (v, sizeof v, "%d", quality);
+  yt_config_set ("max_quality", v);
+  save_choices ();
+}
+
+/* Frame rate: the most frames a second to ask for */
+static void build_fps_menu (void)
+{
+  int f = atoi (yt_config_get ("max_fps"));
+  menu_init (&fps_menu, "Frame rate", 260);
+  menu_add (&fps_menu, 0, "30 a second", 0, f <= 30 ? 1 : 0);
+  menu_add (&fps_menu, 1, "60 a second", 0, (f > 30 ? 1 : 0) | 0x80);
+}
+
+static void choose_fps (int i)
+{
+  if (i == 0 || i == 1)
+    {
+      yt_config_set ("max_fps", i == 0 ? "30" : "60");
+      save_choices ();
+    }
+}
 static enum { M_NONE, M_ICONBAR, M_TILE, M_DATE } menu_open;
 static int menu_tile = -1;
 static char tile_menu_channel[200];
@@ -1111,7 +1176,10 @@ static void build_sound_menu (void)
 static void choose_sound (int i)
 {
   if (i == 0 || i == 1)
-    yt_config_set ("audio_language", i == 0 ? "mine" : "original");
+    {
+      yt_config_set ("audio_language", i == 0 ? "mine" : "original");
+      save_choices ();
+    }
 }
 
 static void build_date_menu (void)
@@ -1144,6 +1212,8 @@ static void set_search_date (int date)
   if (date < 0 || date >= YT_DATE_COUNT)
     return;
   show_search_date (date);
+  yt_config_set ("search_date", yt_date_word (date));
+  save_choices ();
   if (p && p->kind == YT_LIST_SEARCH && p->date != date)
     go (YT_LIST_SEARCH, p->arg, p->arg);
 }
@@ -1151,15 +1221,17 @@ static void set_search_date (int date)
 static void open_iconbar_menu (int x)
 {
   build_quality_menu ();
+  build_fps_menu ();
   build_sound_menu ();
   menu_init (&bar_menu, APP_NAME, 240);
   menu_add (&bar_menu, 0, "Info", info, 0);             /* (a window handle: the Wimp opens it) */
   menu_add (&bar_menu, 1, "Search...", 0, 0);
   menu_add (&bar_menu, 2, "Quality", (int) &quality_menu, 0);
-  menu_add (&bar_menu, 3, "Sound", (int) &sound_menu, 2 /* dotted line */);
-  menu_add (&bar_menu, 4, "Quit", 0, 0x80);
+  menu_add (&bar_menu, 3, "Frame rate", (int) &fps_menu, 0);
+  menu_add (&bar_menu, 4, "Sound", (int) &sound_menu, 2 /* dotted line */);
+  menu_add (&bar_menu, 5, "Quit", 0, 0x80);
   menu_open = M_ICONBAR;
-  fail (_swix (Wimp_CreateMenu, _INR (1, 3), &bar_menu, x - 64, 96 + 5 * 44));
+  fail (_swix (Wimp_CreateMenu, _INR (1, 3), &bar_menu, x - 64, 96 + 6 * 44));
 }
 
 static void open_tile_menu (int i, int x, int y)
@@ -1168,6 +1240,7 @@ static void open_tile_menu (int i, int x, int y)
   const yt_item *it;
   int n = 0;
   build_quality_menu ();
+  build_fps_menu ();
   build_sound_menu ();
   menu_tile = i;
   if (p && i >= 0 && i < p->list.n)
@@ -1195,6 +1268,7 @@ static void open_tile_menu (int i, int x, int y)
   if (depth <= 1)
     tile_menu.item[n - 1].icon_flags |= 1 << 22;
   menu_add (&tile_menu, n++, "Quality", (int) &quality_menu, 0);
+  menu_add (&tile_menu, n++, "Frame rate", (int) &fps_menu, 0);
   menu_add (&tile_menu, n++, "Sound", (int) &sound_menu, 0x80);
   menu_open = M_TILE;
   fail (_swix (Wimp_CreateMenu, _INR (1, 3), &tile_menu, x - 64, y));
@@ -1230,14 +1304,17 @@ static int menu_selection (const int *sel)
       if (sel[0] == 1)
         show_window (1);
       else if (sel[0] == 2 && sel[1] >= 0)
-        quality = sel[1] == 0 ? 360 : sel[1] == 1 ? 480 : sel[1] == 2 ? 720 : 1080;
+        set_quality (sel[1]);
       else if (sel[0] == 3 && sel[1] >= 0)
+        choose_fps (sel[1]);
+      else if (sel[0] == 4 && sel[1] >= 0)
         choose_sound (sel[1]);
-      else if (sel[0] == 4)
+      else if (sel[0] == 5)
         return 1;
       if (adjust)
         {
           build_quality_menu ();
+          build_fps_menu ();
           build_sound_menu ();
           _swix (Wimp_CreateMenu, _INR (1, 3), &bar_menu, 0, 0);
           return 0;
@@ -1267,12 +1344,15 @@ static int menu_selection (const int *sel)
       if (i == base)
         go_back ();
       else if (i == base + 1 && sel[1] >= 0)
-        quality = sel[1] == 0 ? 360 : sel[1] == 1 ? 480 : sel[1] == 2 ? 720 : 1080;
+        set_quality (sel[1]);
       else if (i == base + 2 && sel[1] >= 0)
+        choose_fps (sel[1]);
+      else if (i == base + 3 && sel[1] >= 0)
         choose_sound (sel[1]);
-      if (adjust && (i == base + 1 || i == base + 2))
+      if (adjust && i >= base + 1 && i <= base + 3)
         {
           build_quality_menu ();
+          build_fps_menu ();
           build_sound_menu ();
           _swix (Wimp_CreateMenu, _INR (1, 3), &tile_menu, 0, 0);
           return 0;
@@ -1403,6 +1483,9 @@ int ui_init (void)
         snprintf (path, sizeof path, "%s.TubeSearch.Config", choices);
         yt_config_load (path);
       }
+    choices_path (path, sizeof path);           /* the menus' choices, last */
+    if (path[0])
+      yt_config_load (path);
   }
   quality = atoi (yt_config_get ("max_quality"));
   if (quality < 144)

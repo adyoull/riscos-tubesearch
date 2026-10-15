@@ -27,9 +27,12 @@ type a search and press Return.
 | Select on a channel's name | that channel's videos |
 | More (last tile) | the next part of the list |
 | Back | the page before |
-| Menu | Play, Related, Channel, Back, Quality (360p–1080p), Sound (my language / original) |
+| Menu | Play, Related, Channel, Back, Quality (360p–1080p), Frame rate (30/60), Sound (my language / original) |
 | a pasted YouTube address | plays it, and shows what's related |
-| Menu on the icon bar icon | Info, Search, Quality, Quit |
+| Menu on the icon bar icon | Info, Search, Quality, Frame rate, Sound, Quit |
+
+The menus' choices are saved in `Choices:TubeSearch.Choices` and kept for
+the next run.
 | Uploaded (beside Search) | Any time, Today, This week, This month, This year |
 
 **A web proxy** (for connections YouTube keeps calling a bot, such as

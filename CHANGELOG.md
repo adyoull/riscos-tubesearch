@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.0-rc8 (2026-10-17): Refresh
+
+- A Refresh button beside Back (also F5, and Refresh on the window's
+  menu) fetches the page on screen again: new results, a channel's newest
+  videos, or a live stream that has started since. Asked for by Chris.
+
 ## 0.2.0-rc7 (2026-10-15): a frame rate limit, and choices that stick
 
 - Frame rate on the menus: 30 a second (the default) or 60 (Config

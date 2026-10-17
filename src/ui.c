@@ -54,7 +54,7 @@ enum { Button_Adjust = 1, Button_Menu = 2, Button_Select = 4 };
 #define TEXT_W (TILE_W - 40)
 
 /* toolbar icons */
-enum { I_BACK, I_FIELD, I_SEARCH, I_STATUS, I_DATE, I_DATEPOP };
+enum { I_BACK, I_FIELD, I_SEARCH, I_STATUS, I_DATE, I_DATEPOP, I_REFRESH };
 
 #define MAX_PAGES 24
 
@@ -450,11 +450,11 @@ static void icon (int *ic, int x0, int y0, int x1, int y1, int flags, char *text
 
 static int create_bar (void)
 {
-  static char back_text[] = "Back", search_text[] = "Search";
+  static char back_text[] = "Back", search_text[] = "Search", refresh_text[] = "Refresh", refresh_valid[] = "R5,3";
   static char back_valid[] = "R5,3", search_valid[] = "R6,3", field_valid[] = "Pptr_write;R7",
     status_valid[] = "";
   static char date_valid[] = "R2", pop_text[] = "", pop_valid[] = "Sgright;R5,3";
-  int b[22 + 6 * 8];
+  int b[22 + 7 * 8];
   memset (b, 0, sizeof b);
   b[0] = 0; b[1] = 0; b[2] = 1000; b[3] = TOOLBAR_H;
   b[6] = -1;
@@ -467,16 +467,17 @@ static int create_bar (void)
   b[14] = 0;
   b[15] = 0;
   b[16] = 1;
-  b[21] = 6;
+  b[21] = 7;
   /* Back, the search box, Search, the status line; then the upload-date
      filter (a display field and its pop-up menu button) between Search
      and the status line */
   icon (&b[22], 12, -72, 136, -12, 0x1700313D, back_text, back_valid, sizeof back_text);
-  icon (&b[30], 148, -72, 1060, -12, 0x0700F135, field_buf, field_valid, sizeof field_buf);
+  icon (&b[30], 300, -72, 1060, -12, 0x0700F135, field_buf, field_valid, sizeof field_buf);
   icon (&b[38], 1072, -72, 1232, -12, 0x1700313D, search_text, search_valid, sizeof search_text);
   icon (&b[46], 1546, -72, 3800, -12, 0x15000131, status_buf, status_valid, sizeof status_buf);
   icon (&b[54], 1248, -68, 1476, -16, 0x1700313D, date_buf, date_valid, sizeof date_buf);
   icon (&b[62], 1480, -68, 1528, -16, 0x1700313F, pop_text, pop_valid, sizeof pop_text);
+  icon (&b[70], 148, -72, 288, -12, 0x1700313D, refresh_text, refresh_valid, sizeof refresh_text);
   return fail (_swix (Wimp_CreateWindow, _IN (1) | _OUT (0), b, &bar));
 }
 
@@ -736,6 +737,31 @@ static void go_back (void)
       set_status ("%s", p->status);
     }
   scroll_to (p->scroll_y);
+  redraw_all ();
+}
+
+/* Refresh: the page on screen fetched again from the start (a live
+   stream that has begun, new videos on a channel, new results). */
+static void refresh (void)
+{
+  page *p = cur ();
+  if (!p)
+    return;
+  check_proxy ();
+  api_cancel (p->op);
+  p->op = NULL;
+  yt_list_free (&p->list);
+  memset (&p->list, 0, sizeof p->list);
+  free (p->text);
+  p->text = NULL;
+  p->text_cap = 0;
+  wrap_gen++;
+  thumbs_cancel_pending ();
+  p->op = api_list (p->kind, p->arg, 0, p->date, &p->list, list_done, p);
+  snprintf (p->status, sizeof p->status, "%s", p->op ? "Refreshing..." : "Out of memory");
+  set_status ("%s", p->status);
+  set_extent ();
+  scroll_to (0);
   redraw_all ();
 }
 
@@ -1267,6 +1293,9 @@ static void open_tile_menu (int i, int x, int y)
   menu_add (&tile_menu, n++, "Back", 0, 0);
   if (depth <= 1)
     tile_menu.item[n - 1].icon_flags |= 1 << 22;
+  menu_add (&tile_menu, n++, "Refresh", 0, 0);
+  if (!depth)
+    tile_menu.item[n - 1].icon_flags |= 1 << 22;
   menu_add (&tile_menu, n++, "Quality", (int) &quality_menu, 0);
   menu_add (&tile_menu, n++, "Frame rate", (int) &fps_menu, 0);
   menu_add (&tile_menu, n++, "Sound", (int) &sound_menu, 0x80);
@@ -1343,13 +1372,15 @@ static int menu_selection (const int *sel)
         }
       if (i == base)
         go_back ();
-      else if (i == base + 1 && sel[1] >= 0)
-        set_quality (sel[1]);
+      else if (i == base + 1)
+        refresh ();
       else if (i == base + 2 && sel[1] >= 0)
-        choose_fps (sel[1]);
+        set_quality (sel[1]);
       else if (i == base + 3 && sel[1] >= 0)
+        choose_fps (sel[1]);
+      else if (i == base + 4 && sel[1] >= 0)
         choose_sound (sel[1]);
-      if (adjust && i >= base + 1 && i <= base + 3)
+      if (adjust && i >= base + 2 && i <= base + 4)
         {
           build_quality_menu ();
           build_fps_menu ();
@@ -1427,6 +1458,8 @@ static void click_bar (const int *b)
     }
   if (b[4] == I_BACK)
     go_back ();
+  else if (b[4] == I_REFRESH)
+    refresh ();
   else if (b[4] == I_SEARCH)
     search ();
   else if (b[4] == I_DATE || b[4] == I_DATEPOP)
@@ -1550,6 +1583,8 @@ int ui_event (int reason, int *b)
     case Key_Pressed:
       if (b[0] == bar && b[1] == I_FIELD && b[6] == 13)
         search ();
+      else if (b[6] == 0x185)               /* F5: Refresh */
+        refresh ();
       else if (b[6] == 0x1B && b[0] == bar)
         ;                                   /* Escape in the box: nothing */
       else

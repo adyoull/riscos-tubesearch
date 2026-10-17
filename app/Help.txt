@@ -30,8 +30,11 @@ In the window:
   Select on a channel   (in search results) its videos
   More (the last tile)  fetches the next part of the list
   Back                  the page before (up to 24 are kept)
-  Menu                  Play, Related, Channel, Back, Quality, Frame rate
-                        and Sound
+  Refresh (or F5)       the page on screen fetched again: new results, a
+                        channel's newest videos, or a live stream that has
+                        started since
+  Menu                  Play, Related, Channel, Back, Refresh, Quality,
+                        Frame rate and Sound
 
 Beside Search, the Uploaded filter (click it, or its menu button) limits
 searches to videos uploaded Today, This week, This month or This year, or

@@ -27,7 +27,8 @@ type a search and press Return.
 | Select on a channel's name | that channel's videos |
 | More (last tile) | the next part of the list |
 | Back | the page before |
-| Menu | Play, Related, Channel, Back, Quality (360p–1080p), Frame rate (30/60), Sound (my language / original) |
+| Refresh (or F5) | the page on screen fetched again (a live stream that has started, new videos) |
+| Menu | Play, Related, Channel, Back, Refresh, Quality (360p–1080p), Frame rate (30/60), Sound (my language / original) |
 | a pasted YouTube address | plays it, and shows what's related |
 | Menu on the icon bar icon | Info, Search, Quality, Frame rate, Sound, Quit |
 

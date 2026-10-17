@@ -640,18 +640,44 @@ int main (int argc, char **argv)
   /* Menu: Quality > 720p, then play again */
   click_tile (3, 100, 100, 2);
   {
-    int sel[4] = { 4, 2, -1, -1 };              /* Play, Related, Channel, Back, Quality > 720p */
+    int sel[4] = { 5, 2, -1, -1 };              /* Play, Related, Channel, Back, Refresh, Quality > 720p */
     ui_event (9, sel);
     click_tile (3, 100, 100, 4);
     pump ();
     CHECK (saved_data && strstr (saved_data, "itag=136") && !strstr (saved_data, "itag=137"), "720p after choosing it");
   }
+  /* Refresh (the toolbar button, F5 and the menu): the page fetched again */
+  {
+    int before = api_requests;
+    const int *bar = wins[2].block;
+    CHECK (bar[21] == 7 && !strcmp ((const char *) bar[22 + 8 * 6 + 5], "Refresh"), "a Refresh button");
+    click (2, 6, 0, 0, 4);
+    CHECK (strstr (status (), "Refreshing") != NULL, "refreshing...");
+    pump ();
+    CHECK (api_requests == before + 1 && !strncmp (status (), "24 videos", 9), "the search again, the same 24");
+    redraw ();
+    CHECK (strstr (drawn, "Hero Quiz\n") != NULL, "drawn again");
+    block[0] = 2; block[1] = 1; block[6] = 0x185;
+    ui_event (8, block);
+    pump ();
+    CHECK (api_requests == before + 2, "F5 refreshes too");
+    click_tile (3, 100, 100, 2);
+    {
+      const int *m = (const int *) last_menu;
+      int sel[4] = { 4, -1, -1, -1 };          /* Play, Related, Channel, Back, Refresh */
+      CHECK (m && !strcmp ((const char *) &m[7 + 4 * 6 + 3], "Refresh"), "Refresh on the menu");
+      ui_event (9, sel);
+      pump ();
+      CHECK (api_requests == before + 3, "and from the menu");
+    }
+  }
+
   /* the choices are kept: written to Choices:TubeSearch.Choices, and read
      back (as at the next start) over Config's */
   {
     char path[600], text[600] = "";
     FILE *f;
-    int sel[4] = { 5, 1, -1, -1 };              /* ... Quality, Frame rate > 60 a second */
+    int sel[4] = { 6, 1, -1, -1 };              /* ... Quality, Frame rate > 60 a second */
     size_t n;
     click_tile (3, 100, 100, 2);
     ui_event (9, sel);
@@ -791,7 +817,7 @@ int main (int argc, char **argv)
     const int *m;
     int sel[4] = { 2, -1, -1, -1 };              /* Any time, Today, This week */
     int before;
-    CHECK (bar[21] == 6, "the toolbar has the date filter's two icons");
+    CHECK (bar[21] == 7, "the toolbar has the date filter's two icons (and Refresh)");
     CHECK (!strcmp (date_icon, "Any time"), "it starts at Any time");
     CHECK (bar[22 + 8 * 5 + 4] & 2 && strstr ((const char *) bar[22 + 8 * 5 + 6], "Sgright"),
            "a pop-up menu button");
@@ -880,8 +906,8 @@ int main (int argc, char **argv)
     click_tile (1, 100, 100, 2);
     {
       const int *m = (const int *) last_menu;
-      int sel[4] = { 6, 1, -1, -1 };            /* Play, Related, Channel, Back, Quality, Frame rate, Sound > Original */
-      CHECK (m && !strcmp ((const char *) &m[7 + 6 * 6 + 3], "Sound") && (m[7 + 6 * 6] & 0x80), "the Sound menu, last");
+      int sel[4] = { 7, 1, -1, -1 };            /* Play, Related, Channel, Back, Refresh, Quality, Frame rate, Sound > Original */
+      CHECK (m && !strcmp ((const char *) &m[7 + 7 * 6 + 3], "Sound") && (m[7 + 7 * 6] & 0x80), "the Sound menu, last");
       ui_event (9, sel);
     }
     CHECK (!strcmp (yt_config_get ("audio_language"), "original"), "Sound > Original chosen");

@@ -32,6 +32,7 @@ type a search and press Return.
 | Menu | Play, Related, Channel, Subscribe, Back, Refresh, Quality (360p–1080p), Frame rate (30/60), Sound (my language / original) |
 | a pasted YouTube address | plays it, and shows what's related |
 | Menu on the icon bar icon | Info, Search, Subscriptions, My channels, Quality, Frame rate, Sound, Quit |
+| Uploaded (beside Search) | Any time, Today, This week, This month, This year |
 
 **Subscriptions** are kept on the machine (`Choices:TubeSearch.Subscriptions`),
 with no YouTube account. Drop Google Takeout's `subscriptions.csv`, or a
@@ -39,9 +40,16 @@ NewPipe or FreeTube export, on the window to bring yours in. The videos come
 from each channel's feed (`/feeds/videos.xml?channel_id=`), or its page if
 that fails.
 
+**Language**: YouTube's language and country come from the RISC OS
+territory (France: `fr`, `FR`), unless Config's `language` and `region` say
+otherwise. Titles are shown in the desktop's alphabet (Latin-1 to Latin-10,
+Greek, Cyrillic, Hebrew, Arabic, Welsh or UTF-8), and search words are sent
+as UTF-8. Sound > My language plays the dub in your language; Config's
+`languages` (`en de`) lists others you understand, whose originals play
+undubbed.
+
 The menus' choices are saved in `Choices:TubeSearch.Choices` and kept for
 the next run.
-| Uploaded (beside Search) | Any time, Today, This week, This month, This year |
 
 **A web proxy** (for connections YouTube keeps calling a bot, such as
 mobile broadband): `*Set http_proxy http://[user:password@]host:port/`.

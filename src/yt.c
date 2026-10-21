@@ -34,6 +34,7 @@ static setting settings[] = {
   { "max_fps", "30", NULL },                  /* the most frames a second: 30 or 60 */
   { "stream_format", "hls", NULL },           /* hls, dash (yt.h) */
   { "audio_language", "mine", NULL },         /* mine, original, or a language code (yt.h) */
+  { "languages", "", NULL },                  /* others you understand: "en de" (yt.h) */
   { "search_date", "any", NULL },             /* any, today, week, month, year */
   /* the fallback when the player client gives nothing playable: yt-dlp
      2026-10-10's default client, tv_samsung (needs the player's JavaScript) */
@@ -214,6 +215,10 @@ static void random_id (char *out, int n)
   out[n] = 0;
 }
 
+/* the language a request is asked for in, when not Config's (yt_req_channel_lang) */
+static const char *hl_override;
+#define WEB_HL (hl_override ? hl_override : CFG ("language"))
+
 static void web_context (sb *b, int visitor_request)
 {
   sb_str (b, "{\"context\":{\"client\":{\"clientName\":\"WEB\",\"clientVersion\":");
@@ -221,7 +226,7 @@ static void web_context (sb *b, int visitor_request)
   if (visitor_request)
     sb_str (b, ",\"clientScreen\":\"WATCH\"");
   sb_str (b, ",\"hl\":");
-  sb_quote (b, CFG ("language"));
+  sb_quote (b, WEB_HL);
   sb_str (b, ",\"gl\":");
   sb_quote (b, CFG ("region"));
   sb_str (b, ",\"originalUrl\":\"https://www.youtube.com\",\"platform\":\"DESKTOP\",\"utcOffsetMinutes\":0");
@@ -244,7 +249,7 @@ static char *web_headers (void)
                  "X-YouTube-Client-Name: 1\r\n"
                  "X-YouTube-Client-Version: %s\r\n"
                  "Accept-Language: %s, en;q=0.9\r\n",
-             CFG ("web_user_agent"), CFG ("web_client_version"), CFG ("language"));
+             CFG ("web_user_agent"), CFG ("web_client_version"), WEB_HL);
   if (*CFG ("consent_cookie"))
     sb_printf (&b, "Cookie: %s\r\n", CFG ("consent_cookie"));
   if (yt_visitor)
@@ -363,6 +368,15 @@ yt_req *yt_req_channel (const char *channel_id)
     }
   sb_str (&b, "}");
   return new_req (CFG ("web_host"), "browse", sb_done (&b), web_headers ());
+}
+
+yt_req *yt_req_channel_lang (const char *channel_id, const char *language)
+{
+  yt_req *q;
+  hl_override = language;
+  q = yt_req_channel (channel_id);
+  hl_override = NULL;
+  return q;
 }
 
 yt_req *yt_req_more (int kind, const char *token)
@@ -1068,13 +1082,44 @@ static void xtags_of (const char *url, size_t n, yt_audio *a)
 
 void yt_lang_primary (const char *code, char *out, size_t size)
 {
+  static const char *const old[][2] = { { "iw", "he" }, { "nb", "no" }, { "in", "id" }, { "ji", "yi" } };
   size_t i = 0;
   while (code[i] && i + 1 < size && ((code[i] >= 'a' && code[i] <= 'z') || (code[i] >= 'A' && code[i] <= 'Z')))
     {
       out[i] = (char) (code[i] >= 'A' && code[i] <= 'Z' ? code[i] + 32 : code[i]);
       i++;
     }
-  out[i] = 0;
+  if (size)
+    out[i < size ? i : size - 1] = 0;
+  for (size_t k = 0; k < sizeof old / sizeof old[0]; k++)
+    if (size > 2 && !strcmp (out, old[k][0]))
+      strcpy (out, old[k][1]);
+}
+
+/* Is lang one of Config's languages (a list split by spaces or commas)? */
+static int understood (const char *lang)
+{
+  const char *p = CFG ("languages");
+  char one[16];
+  if (!lang[0])
+    return 0;
+  while (*p)
+    {
+      size_t n = 0;
+      char word[32];
+      while (*p == ' ' || *p == ',' || *p == '\t')
+        p++;
+      while (p[n] && p[n] != ' ' && p[n] != ',' && p[n] != '\t')
+        n++;
+      if (!n)
+        break;
+      snprintf (word, sizeof word, "%.*s", (int) (n < 31 ? n : 31), p);
+      yt_lang_primary (word, one, sizeof one);
+      if (!strcmp (one, lang))
+        return 1;
+      p += n;
+    }
+  return 0;
 }
 
 int yt_audio_score (const yt_audio *a)
@@ -1082,10 +1127,59 @@ int yt_audio_score (const yt_audio *a)
   const char *want = CFG ("audio_language");
   char mine[16];
   int original = a->original || (!a->dubbed && a->dflt);
+  int is_mine, other;
   if (!strcmp (want, "original"))
     return (original ? 8 : 0) + (a->dflt ? 2 : 0);
   yt_lang_primary (strcmp (want, "mine") ? want : CFG ("language"), mine, sizeof mine);
-  return (mine[0] && !strcmp (a->lang, mine) ? 8 : 0) + (original ? 4 : 0) + (a->dflt ? 2 : 0);
+  is_mine = mine[0] && !strcmp (a->lang, mine);
+  other = !is_mine && !strcmp (want, "mine") && understood (a->lang);   /* (a language named is just that) */
+  /* an original you understand, as it was made; then your language's
+     track; then another you understand; then the original */
+  return (original && (is_mine || other) ? 32 : 0) + (is_mine ? 16 : other ? 8 : 0) + (original ? 4 : 0)
+         + (a->dflt ? 1 : 0);                      /* (YouTube's default: only between equals) */
+}
+
+/* RISC OS's territory numbers (Countries in HdrSrc). Canada1 is French
+   Canadian, Canada2 English. Where a territory doesn't say which language
+   (Canada, Belgium, Switzerland), the main one;
+   Config's language changes it. */
+static const struct { short territory; const char *language, *region; } territories[] = {
+  { 0, "en-GB", "GB" }, { 1, "en-GB", "GB" }, { 2, "en-GB", "GB" }, { 3, "en-GB", "GB" },
+  { 4, "it", "IT" }, { 5, "es", "ES" }, { 6, "fr", "FR" }, { 7, "de", "DE" }, { 8, "pt-PT", "PT" },
+  { 10, "el", "GR" }, { 11, "sv", "SE" }, { 12, "fi", "FI" }, { 14, "da", "DK" }, { 15, "no", "NO" },
+  { 16, "is", "IS" }, { 17, "fr-CA", "CA" }, { 18, "en", "CA" }, { 19, "en", "CA" }, { 20, "tr", "TR" },
+  { 21, "ar", "SA" }, { 22, "en-GB", "IE" }, { 23, "zh-HK", "HK" }, { 24, "ru", "RU" }, { 25, "ru", "RU" },
+  { 26, "iw", "IL" }, { 27, "es-419", "MX" }, { 28, "es-419", "AR" }, { 29, "en-GB", "AU" },
+  { 30, "de", "AT" }, { 31, "nl", "BE" }, { 32, "ja", "JP" }, { 33, "ar", "AE" }, { 34, "nl", "NL" },
+  { 35, "de", "CH" }, { 36, "en-GB", "GB" }, { 37, "en-GB", "NZ" }, { 48, "en", "US" },
+  { 49, "en-GB", "GB" }, { 50, "zh-CN", "CN" }, { 51, "pt", "BR" }, { 52, "en-GB", "ZA" },
+  { 53, "ko", "KR" }, { 54, "zh-TW", "TW" }, { 129, "sq", "AL" }, { 130, "en-GB", "ZA" },
+  { 131, "bn", "IN" }, { 132, "bg", "BG" }, { 133, "be", "BY" }, { 134, "cs", "CZ" }, { 135, "hi", "IN" },
+  { 136, "fa", "IR" }, { 137, "gu", "IN" }, { 138, "et", "EE" }, { 140, "el", "GR" }, { 141, "da", "GL" },
+  { 142, "hu", "HU" }, { 144, "lv", "LV" }, { 145, "lt", "LT" }, { 146, "mk", "MK" }, { 147, "en-GB", "MT" },
+  { 148, "pl", "PL" }, { 149, "pa", "IN" }, { 150, "ro", "RO" }, { 151, "sr", "RS" }, { 152, "sk", "SK" },
+  { 153, "sl", "SI" }, { 154, "ta", "IN" }, { 155, "uk", "UA" }, { 156, "fr", "CH" }, { 157, "de", "CH" },
+  { 158, "it", "CH" }, { 159, "de", "CH" },      /* Swiss1 French, 2 German, 3 Italian, 4 Romansh */
+};
+
+int yt_territory_locale (int territory, const char **language, const char **region)
+{
+  for (size_t i = 0; i < sizeof territories / sizeof territories[0]; i++)
+    if (territories[i].territory == territory)
+      {
+        *language = territories[i].language;
+        *region = territories[i].region;
+        return 0;
+      }
+  return -1;
+}
+
+int yt_use_territory (int territory)
+{
+  const char *l, *r;
+  if (yt_territory_locale (territory, &l, &r))
+    return -1;
+  return yt_config_set ("language", l) || yt_config_set ("region", r) ? -1 : 0;
 }
 
 const char *yt_lang_name (const char *code)
@@ -1093,15 +1187,37 @@ const char *yt_lang_name (const char *code)
   static const char *const names[][2] = {
     { "en", "English" }, { "de", "German" }, { "fr", "French" }, { "es", "Spanish" }, { "it", "Italian" },
     { "nl", "Dutch" }, { "pt", "Portuguese" }, { "sv", "Swedish" }, { "da", "Danish" }, { "no", "Norwegian" },
-    { "nb", "Norwegian" }, { "fi", "Finnish" }, { "pl", "Polish" }, { "cs", "Czech" }, { "sk", "Slovak" },
+{ "fi", "Finnish" }, { "pl", "Polish" }, { "cs", "Czech" }, { "sk", "Slovak" },
     { "hu", "Hungarian" }, { "el", "Greek" }, { "tr", "Turkish" }, { "ru", "Russian" }, { "uk", "Ukrainian" },
     { "ja", "Japanese" }, { "ko", "Korean" }, { "zh", "Chinese" }, { "hi", "Hindi" }, { "ar", "Arabic" },
     { "id", "Indonesian" }, { "vi", "Vietnamese" }, { "th", "Thai" }, { "ga", "Irish" }, { "cy", "Welsh" },
+    { "he", "Hebrew" }, { "is", "Icelandic" }, { "ro", "Romanian" }, { "bg", "Bulgarian" }, { "sr", "Serbian" },
+    { "hr", "Croatian" }, { "sl", "Slovenian" }, { "et", "Estonian" }, { "lv", "Latvian" }, { "lt", "Lithuanian" },
+    { "mk", "Macedonian" }, { "sq", "Albanian" }, { "be", "Belarusian" }, { "fa", "Persian" }, { "bn", "Bengali" },
+    { "gu", "Gujarati" }, { "pa", "Punjabi" }, { "ta", "Tamil" }, { "ca", "Catalan" }, { "ms", "Malay" },
   };
   for (size_t i = 0; i < sizeof names / sizeof names[0]; i++)
     if (!strcmp (code, names[i][0]))
       return names[i][1];
   return code;
+}
+
+static int says_bot (const char *reason)
+{
+  for (const char *p = reason; *p; p++)
+    if ((*p == 'b' || *p == 'B') && (p[1] == 'o' || p[1] == 'O') && (p[2] == 't' || p[2] == 'T'))
+      return 1;
+  return 0;
+}
+
+/* Does a track's name say it's the original ("English (US) original",
+   "Deutsch (Original)", "français (original)")? (The xtags say so too.) */
+static int says_original (const char *name)
+{
+  for (const char *p = name; *p; p++)
+    if ((*p == 'o' || *p == 'O') && !strncmp (p + 1, "riginal", 7))
+      return 1;
+  return 0;
 }
 
 /* A DASH format's sound: the "DRC" (quieter) copies are left out (-1). */
@@ -1120,7 +1236,7 @@ static int dash_audio (const jnode *f, yt_audio *a)
   a->dflt = j_true (j_get (t, "audioIsDefault"));
   if (j_str (j_get (t, "id")))
     yt_lang_primary (j_str (j_get (t, "id")), a->lang, sizeof a->lang);
-  if (j_str (j_get (t, "displayName")) && strstr (j_str (j_get (t, "displayName")), "original"))
+  if (j_str (j_get (t, "displayName")) && says_original (j_str (j_get (t, "displayName"))))
     a->original = 1;
   if (u)
     xtags_of (u, strlen (u), a);
@@ -1358,10 +1474,14 @@ int yt_parse_player (const char *json, size_t len, int maxq, yt_play *p, char *e
       if (!j_text (j_get (ps, "reason"), buf, sizeof buf))
         if (!j_text (j_path (ps, "errorScreen.playerErrorMessageRenderer.reason"), buf, sizeof buf))
           j_text (j_path (ps, "messages.0"), buf, sizeof buf);
-      text_display_buf (buf, buf, sizeof buf);
-      snprintf (err, errlen, "YouTube won't play this video%s%s%s",
-                buf[0] ? ": " : "", buf, !strcmp (status ? status : "", "LOGIN_REQUIRED")
-                && strstr (buf, "bot") ? " (try again later, or update the client settings in TubeSearch's Config)" : "");
+      {
+        char shown[sizeof buf];                    /* (not in place: it can grow) */
+        text_display_buf (buf, shown, sizeof shown);
+        /* "...not a bot", in English or not ("Bot", "robot"); not an age check */
+        snprintf (err, errlen, "YouTube won't play this video%s%s%s",
+                  shown[0] ? ": " : "", shown, !strcmp (status ? status : "", "LOGIN_REQUIRED")
+                  && says_bot (buf) ? " (try again later, or update the client settings in TubeSearch's Config)" : "");
+      }
       json_free (d);
       return -1;
     }
@@ -1620,7 +1740,7 @@ int yt_hls_choose (const char *m3u8, size_t len, const char *base_url, int maxq,
                   aud[na].a.dflt = hls_attr (l, n, "DEFAULT", d, sizeof d) && !strcmp (d, "YES");
                   if (hls_attr (l, n, "LANGUAGE", lang, sizeof lang))
                     yt_lang_primary (lang, aud[na].a.lang, sizeof aud[na].a.lang);
-                  if (hls_attr (l, n, "NAME", name, sizeof name) && strstr (name, "original"))
+                  if (hls_attr (l, n, "NAME", name, sizeof name) && says_original (name))
                     aud[na].a.original = 1;
                   xtags_of (aud[na].uri, aud[na].urilen, &aud[na].a);
                   na++;

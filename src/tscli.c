@@ -128,6 +128,7 @@ static int usage (void)
 {
   fprintf (stderr, "usage: tscli [-more N] [-dump DIR] [-config FILE] [-client C] [-ejs DIR] [-state DIR] [-work DIR]\n"
                    "             [-date any|today|week|month|year] [-proxy URL|none] [-sound mine|original|LANG] [-fps 30|60]\n"
+                   "             [-lang fr|en-GB...] [-region FR|GB...] [-languages \"en de\"]\n"
                    "             search WORDS... | related ID | channel ID | play ID [LINES] [FILE]\n"
                    "             | feed UC... [UC...] | import FILE\n"
                    "             | update | [-wimp] solve JOB ANSWER\n");
@@ -224,6 +225,14 @@ int main (int argc, char **argv)
   srand ((unsigned) time (NULL));
 #ifndef __riscos
   signal (SIGPIPE, SIG_IGN);           /* a connection closed under us is an error, not the end */
+#else
+  {
+    int territory, alphabet;           /* the language and country, and the alphabet, as TubeSearch's */
+    if (!_swix (Territory_Number, _OUT (0), &territory))
+      yt_use_territory (territory);
+    if (!_swix (OS_Byte, _INR (0, 1) | _OUT (1), 71, 127, &alphabet))
+      text_set_alphabet (alphabet);
+  }
 #endif
   while (a < argc && argv[a][0] == '-')
     {
@@ -263,6 +272,12 @@ int main (int argc, char **argv)
         yt_config_set ("audio_language", argv[a + 1]);
       else if (!strcmp (argv[a], "-fps"))
         yt_config_set ("max_fps", argv[a + 1]);
+      else if (!strcmp (argv[a], "-lang"))
+        yt_config_set ("language", argv[a + 1]);
+      else if (!strcmp (argv[a], "-region"))
+        yt_config_set ("region", argv[a + 1]);
+      else if (!strcmp (argv[a], "-languages"))
+        yt_config_set ("languages", argv[a + 1]);
       else
         return usage ();
       a += 2;
@@ -426,6 +441,16 @@ int main (int argc, char **argv)
             strcat (query, " ");
           strcat (query, argv[i]);
         }
+      {
+#ifdef __riscos
+        char *u = text_to_utf8 (query);            /* (typed in the desktop's alphabet) */
+        if (u)
+          {
+            snprintf (query, sizeof query, "%s", u);
+            free (u);
+          }
+#endif
+      }
       if (!api_list (kind, query, 0, date < 0 ? 0 : date, &l, list_done, NULL))
         return 1;
       wait_done ();

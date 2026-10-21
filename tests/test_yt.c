@@ -95,6 +95,99 @@ static void test_text (void)
   text_display_buf ("Caf\xC3\xA9", out, sizeof out);
   CHECK (!strcmp (out, "Caf\xC3\xA9"));
   text_utf8_desktop = 0;
+  /* the other alphabets */
+  {
+    char *u;
+    CHECK (text_set_alphabet (102) == 0 && !strcmp (text_alphabet_name (), "Latin2"));
+    text_display_buf ("\xC5\x81\xC3\xB3" "d\xC5\xBA \xE2\x80\xA2 \xC2\xA9", out, sizeof out);   /* Łódź • © */
+    CHECK (!strcmp (out, "\xA3\xF3" "d\xBC - (C)"));                        /* (Latin-2 has no middle dot) */
+    CHECK ((u = text_to_utf8 ("\xA3\xF3" "d\xBC")) && !strcmp (u, "\xC5\x81\xC3\xB3" "d\xC5\xBA"));
+    free (u);
+    CHECK (text_set_alphabet (107) == 0);                                   /* Greek */
+    text_display_buf ("\xCE\x91\xCE\xB8\xCE\xAE\xCE\xBD\xCE\xB1 \xE2\x80\xA2 x", out, sizeof out);  /* Αθήνα */
+    CHECK (!strcmp (out, "\xC1\xE8\xDE\xED\xE1 \xB7 x"));
+    CHECK (text_set_alphabet (105) == 0);                                   /* Cyrillic */
+    text_display_buf ("\xD0\x9C\xD0\xBE\xD1\x81\xD0\xBA\xD0\xB2\xD0\xB0", out, sizeof out);  /* Москва */
+    CHECK (!strcmp (out, "\xBC\xDE\xE1\xDA\xD2\xD0"));
+    CHECK ((u = text_to_utf8 ("\xBC\xDE")) && !strcmp (u, "\xD0\x9C\xD0\xBE"));
+    free (u);
+    CHECK (text_set_alphabet (112) == 0);                                   /* Latin-9: the euro */
+    text_display_buf ("5 \xE2\x82\xAC", out, sizeof out);
+    CHECK (!strcmp (out, "5 \xA4"));
+    CHECK (text_set_alphabet (110) == 0);                                   /* Welsh */
+    text_display_buf ("\xC5\xB5", out, sizeof out);                         /* ŵ */
+    CHECK (!strcmp (out, "\xF0"));
+    CHECK (text_set_alphabet (102) == 0);                                   /* © and ® grow: "(C)" */
+    text_display_buf ("\xC2\xA9" "AB \xC2\xAE" "CD", out, sizeof out);
+    CHECK (!strcmp (out, "(C)AB (R)CD"));
+    CHECK (text_set_alphabet (120) == -1);                                  /* Cyrillic2: not known, so ASCII only */
+    text_display_buf ("Caf\xC3\xA9", out, sizeof out);
+    CHECK (!strcmp (out, "Caf?"));
+    CHECK ((u = text_to_utf8 ("Caf\xE9")) && !strcmp (u, "Caf?"));
+    free (u);
+    CHECK (text_set_alphabet (108) == 0);                                   /* Hebrew: direction marks left out */
+    text_display_buf ("\xD7\xA9\xE2\x80\x8F 1", out, sizeof out);
+    CHECK (!strcmp (out, "\xF9\xFE 1"));                                   /* (Hebrew has the right-to-left mark) */
+    text_set_alphabet (101);
+    text_display_buf ("a\xE2\x80\x8F b", out, sizeof out);
+    CHECK (!strcmp (out, "a b"));
+    CHECK (text_set_alphabet (99) == -1 && !strcmp (text_alphabet_name (), "ASCII"));
+    CHECK (text_set_alphabet (101) == 0 && !strcmp (text_alphabet_name (), "Latin1"));
+    CHECK ((u = text_to_utf8 ("Caf\xE9")) && !strcmp (u, "Caf\xC3\xA9"));
+    free (u);
+    CHECK (text_set_alphabet (111) == 0 && text_utf8_desktop);
+    CHECK ((u = text_to_utf8 ("Caf\xC3\xA9")) && !strcmp (u, "Caf\xC3\xA9"));
+    free (u);
+    text_set_alphabet (101);
+  }
+}
+
+/* The language and country from RISC OS's territory; languages understood */
+static void test_languages (void)
+{
+  const char *l, *r;
+  char c[16];
+  yt_audio orig_en = { "en", 1, 0, 1 }, dub_fr = { "fr", 0, 1, 0 }, dub_de = { "de", 0, 1, 0 };
+  CHECK (yt_territory_locale (6, &l, &r) == 0 && !strcmp (l, "fr") && !strcmp (r, "FR"));
+  CHECK (yt_territory_locale (1, &l, &r) == 0 && !strcmp (l, "en-GB") && !strcmp (r, "GB"));
+  CHECK (yt_territory_locale (48, &l, &r) == 0 && !strcmp (l, "en") && !strcmp (r, "US"));
+  CHECK (yt_territory_locale (7, &l, &r) == 0 && !strcmp (l, "de") && !strcmp (r, "DE"));
+  CHECK (yt_territory_locale (157, &l, &r) == 0 && !strcmp (l, "de") && !strcmp (r, "CH"));
+  CHECK (yt_territory_locale (17, &l, &r) == 0 && !strcmp (l, "fr-CA"));                    /* Canada1: French */
+  CHECK (yt_territory_locale (9, &l, &r) == -1 && yt_territory_locale (999, &l, &r) == -1);   /* Esperanto: none */
+  CHECK (yt_use_territory (6) == 0 && !strcmp (yt_config_get ("language"), "fr") && !strcmp (yt_config_get ("region"), "FR"));
+  CHECK (yt_use_territory (9) == -1 && !strcmp (yt_config_get ("language"), "fr"));            /* left as it was */
+  yt_lang_primary ("iw", c, sizeof c);
+  CHECK (!strcmp (c, "he"));
+  yt_lang_primary ("pt-BR", c, sizeof c);
+  CHECK (!strcmp (c, "pt"));
+  /* French: a French dub before an English original... */
+  CHECK (yt_audio_score (&dub_fr) > yt_audio_score (&orig_en));
+  /* ...unless English is understood too: then the original as it was made */
+  yt_config_set ("languages", "en, de");
+  CHECK (yt_audio_score (&orig_en) > yt_audio_score (&dub_fr));
+  /* a German dub (understood) isn't taken over the French one */
+  CHECK (yt_audio_score (&dub_fr) > yt_audio_score (&dub_de));
+  {
+    /* a Japanese original, a German dub (understood), no French: the dub */
+    yt_audio orig_ja = { "ja", 1, 0, 1 };
+    yt_config_set ("languages", "de");
+    CHECK (yt_audio_score (&dub_de) > yt_audio_score (&orig_ja));
+  }
+  {
+    /* YouTube's default on a dub you understand doesn't beat your own */
+    yt_audio dub_de_dflt = { "de", 0, 1, 1 };
+    CHECK (yt_audio_score (&dub_fr) > yt_audio_score (&dub_de_dflt));
+    /* a language named is that one, whatever else is understood */
+    yt_config_set ("audio_language", "de");
+    CHECK (yt_audio_score (&dub_de) > yt_audio_score (&orig_en));
+    yt_config_set ("audio_language", "mine");
+  }
+  yt_config_set ("languages", "de");                                       /* English not understood */
+  CHECK (yt_audio_score (&dub_fr) > yt_audio_score (&orig_en));
+  yt_config_set ("languages", "");
+  yt_config_set ("language", "en-GB");
+  yt_config_set ("region", "GB");
 }
 
 static void test_requests (void)
@@ -569,6 +662,7 @@ int main (int argc, char **argv)
   verbose = argc > 2 && !strcmp (argv[2], "-v");
   test_json ();
   test_text ();
+  test_languages ();
   test_requests ();
   test_lists ();
   test_player ();

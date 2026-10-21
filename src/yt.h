@@ -49,6 +49,8 @@ const char *yt_date_word (int date);         /* "any", "today", "week", "month",
 int yt_date_parse (const char *word);        /* YT_DATE_*, or -1 */
 yt_req *yt_req_related (const char *video_id);
 yt_req *yt_req_channel (const char *channel_id);
+/* The same, asked for in that language rather than Config's ("en"). */
+yt_req *yt_req_channel_lang (const char *channel_id, const char *language);
 yt_req *yt_req_player (const char *video_id);
 /* The same from the TV client (TVHTML5), whose addresses need the player's
    JavaScript; sts is the player's signature timestamp (yt_player_sts). */
@@ -118,11 +120,23 @@ typedef struct {
 
 /* How well a track suits Config's audio_language: "mine" (the default: the
    language of Config's language setting, then the original), "original"
-   (what the video was made with), or a language code ("de"). Higher is
+   (what the video was made with), or a language code ("de"). With "mine",
+   Config's languages (others you understand, "en de") count too: an
+   original in one of them is played as it is, before a dub in your
+   language. YouTube's default only decides between equals. Higher is
    better. */
 int yt_audio_score (const yt_audio *a);
-/* "en-GB" -> "en" (into out). */
+/* "en-GB" -> "en" (into out); YouTube's old codes as the tracks give
+   them ("iw" -> "he", "nb" -> "no", "in" -> "id"). */
 void yt_lang_primary (const char *code, char *out, size_t size);
+/* The language ("fr", "en-GB", "es-419") and country ("FR") YouTube is
+   told, for a RISC OS territory number (Territory_Number: 1 UK, 6 France,
+   48 USA...). 0 with both set; -1 for a territory without one (the
+   settings are then left as they are). */
+int yt_territory_locale (int territory, const char **language, const char **region);
+/* Sets Config's language and region from the territory (before the
+   Config files are read, so they can still say otherwise). 0, or -1. */
+int yt_use_territory (int territory);
 /* "en" -> "English" (or the code itself). */
 const char *yt_lang_name (const char *code);
 

@@ -537,7 +537,8 @@ static int feed_step (api_op *op)
     }
   else
     {
-      yt_req *q = yt_req_channel (op->ids[op->at]);
+      /* asked for in English: the times are read from "3 days ago" */
+      yt_req *q = yt_req_channel_lang (op->ids[op->at], "en");
       if (q)
         op->req = http_post (q->host, q->path, q->headers, q->body, strlen (q->body), TAG_API, feed_done, op);
       yt_req_free (q);

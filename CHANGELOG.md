@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.2.0-rc10 (2026-10-21): languages
+
+- The language and country YouTube is told come from RISC OS's territory
+  (Territory_Number: France gives fr and FR, Germany de and DE, the USA
+  en and US, Canada1 fr-CA...), before the Config files, which can still set them. Until
+  now everyone got en-GB and GB, so My language gave French users English
+  dubs.
+- Titles and names are shown in the desktop's alphabet (OS_Byte 71):
+  Latin-1 to Latin-10, Cyrillic, Greek, Hebrew, Arabic, Welsh, as well as
+  UTF-8. Before, everything but UTF-8 was treated as Latin-1. In an
+  alphabet TubeSearch doesn't know, only ASCII is shown as itself.
+  tscli does the same, and sends its search words as UTF-8.
+- Search words with accented letters were sent to YouTube in the desktop's
+  alphabet rather than UTF-8; they're converted now.
+- Config's languages: others you understand (languages = en de). A video
+  made in one of them plays as it was made rather than dubbed into yours;
+  a dub in one of them is taken over an original you don't. YouTube's
+  "default" mark on a track now only decides between equals, so a default
+  dub in another language no longer beats one in yours. Sound set to a
+  language (audio_language = de) means that one, whatever languages says.
+- A sound track's name saying it's the original is recognised in other
+  languages too ("Deutsch (Original)"), and the hint about YouTube's bot
+  check works when the reason isn't in English ("Bot", "robot").
+- The Sound menu names your language (My language (French)).
+- A subscribed channel read from its page (when its feed fails) is asked
+  for in English, as its videos' times are read from "3 days ago".
+- tscli: -lang, -region and -languages.
+
 ## 0.2.0-rc9 (2026-10-21): subscriptions
 
 - Channel subscriptions, kept on this machine (no YouTube account):

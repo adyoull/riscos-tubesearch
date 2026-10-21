@@ -208,6 +208,7 @@ static const _kernel_oserror *os (int swi, int r[10])
       r[2] = r[1] == 4 || r[1] == 5 ? 1 : r[1] == 11 ? 1919 : r[1] == 12 ? 1079 : 0;
       return NULL;
     case OS_Byte: r[1] = 101; return NULL;           /* Latin-1 */
+    case Territory_Number: r[0] = 6; return NULL;    /* France */
     case OS_Plot: return NULL;
     case ColourTrans_SetGCOL: return NULL;
     case OS_File:
@@ -268,7 +269,7 @@ static void install (void)
     Wimp_SetCaretPosition, Wimp_ProcessKey, Wimp_CloseDown, Wimp_RedrawWindow, Wimp_GetRectangle,
     Wimp_TextOp, Wimp_CreateMenu, Wimp_GetPointerInfo, Wimp_ReportError, Wimp_StartTask, 0 };
   static const int o[] = { OS_ReadModeVariable, OS_Byte, OS_Plot, ColourTrans_SetGCOL, OS_File,
-    OS_SpriteOp, JPEG_Info, JPEG_PlotScaled, 0 };
+    OS_SpriteOp, JPEG_Info, JPEG_PlotScaled, Territory_Number, 0 };
   for (int i = 0; w[i]; i++)
     fake_swi (w[i], NULL, wimp);
   for (int i = 0; o[i]; i++)
@@ -536,6 +537,10 @@ int main (int argc, char **argv)
   setenv ("Alias$Reel", "/<Reel$Dir> %*0", 1);
 
   CHECK (ui_init () == 0, "starts");
+  CHECK (!strcmp (yt_config_get ("language"), "fr") && !strcmp (yt_config_get ("region"), "FR"),
+         "the language and country from the territory (France)");
+  yt_config_set ("language", "en-GB");         /* (the rest expects the defaults) */
+  yt_config_set ("region", "GB");
   yt_config_set ("stream_format", "dash");     /* (HLS has its own part, near the end) */
   CHECK (iconbar_icons == 1 && nwins == 3, "an icon bar icon and three windows");
   /* the Info box: four labels and four values; Version says which */
@@ -862,6 +867,15 @@ int main (int argc, char **argv)
     CHECK (search_requests == before + 1 && strstr (last_search, "\"params\":\"EgIIAw==\""),
            "the search again, for this week");
     CHECK (strstr (last_search, "\"query\":\"test\"") != NULL, "the same words");
+    {
+      /* words typed in the desktop's alphabet go to YouTube as UTF-8 */
+      int before2 = search_requests;
+      type_and_search ("caf\xE9");
+      pump ();
+      CHECK (search_requests == before2 + 1 && strstr (last_search, "\"query\":\"caf\xC3\xA9\""), "caf\xE9 sent as UTF-8");
+      CHECK (!strncmp (title (), "TubeSearch: caf\xE9", 16), "and shown as typed");
+      click (2, 0, 0, 0, 4);                     /* Back */
+    }
     CHECK (!strcmp (date_icon, "This week"), "the toolbar shows it");
     CHECK (!strcmp (title (), "TubeSearch: test (This week)"), "and the title");
     click (2, 4, 0, 0, 4);                       /* the display field opens the menu too */
@@ -936,6 +950,11 @@ int main (int argc, char **argv)
       ui_event (9, sel);
     }
     CHECK (!strcmp (yt_config_get ("audio_language"), "original"), "Sound > Original chosen");
+    {
+      const int *m = (const int *) last_menu, *sm = m ? (const int *) m[7 + 8 * 6 + 1] : NULL;
+      CHECK (sm && (sm[7 + 2] & 0x100) && !strcmp ((const char *) sm[7 + 3], "My language (German)"),
+             "Sound's first item names my language");
+    }
     click_tile (1, 100, 100, 4);
     pump ();
     CHECK (saved_data && strstr (saved_data, "acont%253Doriginal%253Alang%253Den-US") && !strstr (saved_data, "dubbed"),

@@ -507,12 +507,13 @@ static int create_info (void)
   static char title[] = "About this program";
   static char name[] = APP_NAME;
   static char purpose[] = "Browse YouTube; play in Reel";
-  static char author[] = "\xA9 Andrew Youll, 2026";
+  static char author[40];
   static char version[48];
   static char label_name[] = "Name", label_purpose[] = "Purpose", label_author[] = "Author",
     label_version[] = "Version", none[] = "";
   static char *const labels[4] = { label_name, label_purpose, label_author, label_version };
   char *const values[4] = { name, purpose, author, version };
+  text_display_buf ("\xC2\xA9 Andrew Youll, 2026", author, sizeof author);   /* (the desktop's ©, or (C)) */
   int b[22 + 8 * 8];
   int w = 920, row = 52, h = 4 * row + 24;
   snprintf (version, sizeof version, "%s%s%s%s", TUBE_VERSION, TUBE_DATE[0] ? " (" : "", TUBE_DATE,
@@ -628,25 +629,6 @@ static void subs_store (void)
 {
   if (subs_path[0] && subs_save (&subs, subs_path))
     ui_report ("The subscriptions couldn't be saved");
-}
-
-/* a name shown here (the desktop's alphabet) back into UTF-8 for the file */
-static char *to_utf8 (const char *s)
-{
-  size_t n = strlen (s);
-  char *o = malloc (n * 2 + 1), *w = o;
-  if (!o)
-    return NULL;
-  for (const unsigned char *r = (const unsigned char *) s; *r; r++)
-    if (*r < 0x80 || text_utf8_desktop)
-      *w++ = (char) *r;
-    else
-      {
-        *w++ = (char) (0xC0 | (*r >> 6));
-        *w++ = (char) (0x80 | (*r & 63));
-      }
-  *w = 0;
-  return o;
 }
 
 static int count_new (const page *p)
@@ -784,7 +766,12 @@ static void fetch (page *p, const char *doing)
         snprintf (p->status, sizeof p->status, "Out of memory");
       return;
     }
-  p->op = api_list (p->kind, p->arg, 0, p->date, &p->list, list_done, p);
+  {
+    /* the words typed are in the desktop's alphabet: YouTube wants UTF-8 */
+    char *a = p->kind == YT_LIST_SEARCH ? text_to_utf8 (p->arg) : NULL;
+    p->op = api_list (p->kind, a ? a : p->arg, 0, p->date, &p->list, list_done, p);
+    free (a);
+  }
   if (!p->op && !p->list.n && !strcmp (p->status, doing))
     snprintf (p->status, sizeof p->status, "Out of memory");
 }
@@ -1316,8 +1303,12 @@ static void build_quality_menu (void)
 static void build_sound_menu (void)
 {
   const char *a = yt_config_get ("audio_language");
-  menu_init (&sound_menu, "Sound", 300);
-  menu_add (&sound_menu, 0, "My language", 0, !strcmp (a, "mine") ? 1 : 0);
+  static char mine[64];
+  char code[16];
+  yt_lang_primary (yt_config_get ("language"), code, sizeof code);
+  snprintf (mine, sizeof mine, "My language (%s)", yt_lang_name (code));
+  menu_init (&sound_menu, "Sound", strlen (mine) * 16 + 48 > 300 ? (int) strlen (mine) * 16 + 48 : 300);
+  menu_add_ind (&sound_menu, 0, mine, sizeof mine, !strcmp (a, "mine") ? 1 : 0);
   menu_add (&sound_menu, 1, "Original", 0, (!strcmp (a, "original") ? 1 : 0) | 0x80);
 }
 
@@ -1416,7 +1407,7 @@ static void toggle_sub (void)
     }
   else
     {
-      char *u = to_utf8 (menu_sub.name);
+      char *u = text_to_utf8 (menu_sub.name);
       if (!u || subs_add (&subs, menu_sub.id, u, menu_sub.thumb) < 0)
         ui_report ("Out of memory");
       else
@@ -1694,9 +1685,13 @@ int ui_init (void)
       ui_report (err);
       return 1;
     }
-  /* the settings: !TubeSearch's own Config, then the user's in Choices */
+  /* the settings: the language and country from the territory, then
+     !TubeSearch's own Config, then the user's in Choices */
   {
     char path[300];
+    int territory;
+    if (!_swix (Territory_Number, _OUT (0), &territory))
+      yt_use_territory (territory);
     const char *choices = getenv ("Choices$Write");
     if (dir)
       {
@@ -1727,7 +1722,7 @@ int ui_init (void)
   snprintf (date_buf, sizeof date_buf, "%s", yt_date_name (search_date));
   check_proxy ();
   if (!_swix (OS_Byte, _INR (0, 1) | _OUT (1), 71, 127, &alphabet))
-    text_utf8_desktop = alphabet == 111;
+    text_set_alphabet (alphabet);
   read_screen ();
   http_init (&transport_system);
   thumbs_init (picture_arrived);

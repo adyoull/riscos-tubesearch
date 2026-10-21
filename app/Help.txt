@@ -79,11 +79,29 @@ Quality, Frame rate, Sound and the Uploaded filter are remembered: they're
 saved in Choices:TubeSearch.Choices as you choose them, and used the next
 time TubeSearch starts (over the Config file's settings).
 
+Language
+--------
+TubeSearch takes your language and country from RISC OS's territory
+(French in France, German in Germany, English and the UK in the UK...).
+YouTube then gives results for that country, and its own words (titles
+it translates, "3 days ago", views) in that language; TubeSearch's own
+words stay English. Config's language and region settings choose
+others.
+
+Titles are shown in the desktop's alphabet (Latin-1 to Latin-10, Greek,
+Cyrillic, Hebrew, Arabic, Welsh, or UTF-8): with the right one, Polish,
+Czech, Greek or Russian titles show properly, and letters the alphabet
+lacks show as '?'. Accented letters typed in the search box reach
+YouTube as they should.
+
 Many videos now have dubbed sound tracks besides the original (YouTube
 adds some itself). Sound on the menus chooses: My language plays the
-track in your language (Config's language setting, en-GB at first) if
-the video has one, and the original otherwise; Original always plays
-what the video was made with. The status line says which it is.
+track in your language if the video has one, and the original
+otherwise; Original always plays what the video was made with. The
+status line says which it is. If you understand other languages too,
+list them in Config's languages setting (languages = en de): a video
+made in one of them is then played as it was made, not dubbed into
+yours.
 
 Videos are played as HLS: YouTube's playlists of short pieces, each
 fetched on its own. YouTube can slow down, or refuse part way, the two
@@ -176,6 +194,8 @@ and find faults (and the JavaScript helper):
   tscli -proxy <URL>|none ...   a proxy instead of http_proxy
   tscli -sound original ...     the sound track: mine, original or a language
   tscli -fps 60 ...             the most frames a second
+  tscli -lang fr -region FR ... YouTube's language and country
+  tscli -languages "en de" ...  other languages you understand
   tscli feed UC... [UC...]      those channels' newest videos
   tscli import <file>           the channels in a subscriptions list
 

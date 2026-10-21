@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.0-rc9 (2026-10-21): subscriptions
+
+- Channel subscriptions, kept on this machine (no YouTube account):
+  Subscribe / Unsubscribe on the window menu (a channel's, or a video's
+  for its channel, or a channel's own page); a Subscriptions button (and
+  icon bar menu item) showing the channels' newest videos, newest first,
+  with the ones since you last looked marked New; My channels (Adjust on
+  the button) listing the channels.
+- Bring in your YouTube subscriptions by dropping Google Takeout's
+  subscriptions.csv (in any language), or a NewPipe or FreeTube export,
+  on the window or icon bar icon.
+- The videos come from each channel's feed
+  (www.youtube.com/feeds/videos.xml?channel_id=...), one at a time with a
+  count on the status line; a channel whose feed fails is read from its
+  page instead; if some can't be read at all the status line says how
+  many, and their new videos are still New next time. Kept in
+  Choices:TubeSearch.Subscriptions.
+- tscli: feed UC... and import FILE.
+
 ## 0.2.0-rc8 (2026-10-17): Refresh
 
 - A Refresh button beside Back (also F5, and Refresh on the window's

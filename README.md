@@ -27,10 +27,17 @@ type a search and press Return.
 | Select on a channel's name | that channel's videos |
 | More (last tile) | the next part of the list |
 | Back | the page before |
+| Subscriptions | the newest videos of the channels you follow (Adjust: the channels) |
 | Refresh (or F5) | the page on screen fetched again (a live stream that has started, new videos) |
-| Menu | Play, Related, Channel, Back, Refresh, Quality (360p–1080p), Frame rate (30/60), Sound (my language / original) |
+| Menu | Play, Related, Channel, Subscribe, Back, Refresh, Quality (360p–1080p), Frame rate (30/60), Sound (my language / original) |
 | a pasted YouTube address | plays it, and shows what's related |
-| Menu on the icon bar icon | Info, Search, Quality, Frame rate, Sound, Quit |
+| Menu on the icon bar icon | Info, Search, Subscriptions, My channels, Quality, Frame rate, Sound, Quit |
+
+**Subscriptions** are kept on the machine (`Choices:TubeSearch.Subscriptions`),
+with no YouTube account. Drop Google Takeout's `subscriptions.csv`, or a
+NewPipe or FreeTube export, on the window to bring yours in. The videos come
+from each channel's feed (`/feeds/videos.xml?channel_id=`), or its page if
+that fails.
 
 The menus' choices are saved in `Choices:TubeSearch.Choices` and kept for
 the next run.

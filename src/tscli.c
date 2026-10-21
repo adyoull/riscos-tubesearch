@@ -33,6 +33,7 @@
 #include <sys/stat.h>
 #include "api.h"
 #include "proxy.h"
+#include "subs.h"
 #include "ejsupd.h"
 #include "http.h"
 #include "solvejob.h"
@@ -128,6 +129,7 @@ static int usage (void)
   fprintf (stderr, "usage: tscli [-more N] [-dump DIR] [-config FILE] [-client C] [-ejs DIR] [-state DIR] [-work DIR]\n"
                    "             [-date any|today|week|month|year] [-proxy URL|none] [-sound mine|original|LANG] [-fps 30|60]\n"
                    "             search WORDS... | related ID | channel ID | play ID [LINES] [FILE]\n"
+                   "             | feed UC... [UC...] | import FILE\n"
                    "             | update | [-wimp] solve JOB ANSWER\n");
   return 2;
 }
@@ -369,6 +371,44 @@ int main (int argc, char **argv)
       yt_list l;
       int kind;
       memset (&l, 0, sizeof l);
+      if (!strcmp (argv[a], "feed"))
+        {
+          /* the channels' newest videos, as Subscriptions shows them */
+          api_op *op;
+          finished = 0;
+          op = api_feed ((const char *const *) &argv[a + 1], argc - a - 1, 0, 150, &l, list_done, NULL, NULL, NULL, NULL);
+          if (!op && !finished)
+            return 1;
+          if (op)
+            wait_done ();
+          print_list (&l, 0);
+          yt_list_free (&l);
+          http_shutdown ();
+          return failed;
+        }
+      if (!strcmp (argv[a], "import"))
+        {
+          /* what a subscriptions list (Takeout, NewPipe, FreeTube) holds */
+          yt_subs s;
+          FILE *f = fopen (argv[a + 1], "rb");
+          static char text[8 << 20];
+          size_t n = f ? fread (text, 1, sizeof text - 1, f) : 0;
+          int found = 0, k;
+          if (f)
+            fclose (f);
+          text[n] = 0;
+          memset (&s, 0, sizeof s);
+          if ((k = subs_import (&s, text, n, &found)) < 0)
+            {
+              fprintf (stderr, "tscli: %s isn't a subscriptions list TubeSearch knows\n", argv[a + 1]);
+              return 1;
+            }
+          for (int i = 0; i < s.n; i++)
+            printf ("%s  %s\n", s.v[i].id, s.v[i].name);
+          fprintf (stderr, "tscli: %d channels\n", s.n);
+          subs_free (&s);
+          return 0;
+        }
       if (!strcmp (argv[a], "search"))
         kind = YT_LIST_SEARCH;
       else if (!strcmp (argv[a], "related"))

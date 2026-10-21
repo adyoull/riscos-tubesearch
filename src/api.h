@@ -19,7 +19,20 @@ typedef void (*api_play_cb) (yt_play *p, const char *err, void *ctx);
    a search's upload-date filter, YT_DATE_*. Items are added to list, which
    must stay until the callback (or api_cancel). */
 api_op *api_list (int kind, const char *arg, int more, int date, yt_list *list, api_list_cb cb, void *ctx);
-/* (Either may call cb before returning, and then returns NULL.) */
+/* The newest videos of the channels (n IDs), newest first and at most max:
+   each channel's feed (subs.h), or if that fails its page. They replace
+   list's contents only at the end (until then list is as it was). Videos
+   published after seen are marked new. progress (may be NULL) is called
+   after each channel (done of total). names (may be NULL): the channels'
+   names there brought up to date from their feeds. result (may be NULL):
+   how many channels failed, and the newest video's time. cb at the end:
+   the number of videos, or -1 with err when no channel could be read. */
+typedef struct { int failed; long newest; } api_feed_result;
+#include "subs.h"
+api_op *api_feed (const char *const *ids, int n, long seen, int max, yt_list *list, api_list_cb cb,
+                  void (*progress) (int done, int total, void *ctx), void *ctx,
+                  yt_subs *names, api_feed_result *result);
+/* (Each may call cb before returning, and then returns NULL.) */
 api_op *api_play (const char *video_id, int maxq, api_play_cb cb, void *ctx);
 
 /* Forget an operation: its callback is never called. */

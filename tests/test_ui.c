@@ -39,6 +39,7 @@ static char report[256], started[512], saved_path[256];
 static char *saved_data;
 static int sprite_outputs, sprite_plots, jpeg_plots, menus_made;
 static void *last_menu;
+static int acks_sent;
 static char last_search[8192];             /* the body of the newest search request */
 static int search_requests;
 
@@ -192,6 +193,8 @@ static const _kernel_oserror *wimp (int swi, int r[10])
     case Wimp_SendMessage:
       if (r[0] == 17 && ((int *) r[1])[4] == 0)
         quit_sent_to = r[2];
+      if (r[0] == 17 && ((int *) r[1])[4] == 4)
+        acks_sent++;                                 /* Message_DataLoadAck */
       return NULL;
     }
   return &err_bad;
@@ -300,6 +303,7 @@ static char *load (const char *name, size_t *len)
 }
 
 static int iframe_requests, playerjs_requests, tv_requests, manifest_requests, hls_requests, hls_broken;
+static int feed_requests;
 
 static void answer (fconn *c, const char *req)
 {
@@ -317,6 +321,26 @@ static void answer (fconn *c, const char *req)
     {
       playerjs_requests++;
       body = load ("player_854a788e.js", &len);
+    }
+  else if (!strncmp (req, "GET /feeds/videos.xml?channel_id=", 33))
+    {
+      /* a channel's feed: tests/subs/feed_<id>.xml, or 404 (then its page) */
+      char name[80];
+      FILE *t;
+      feed_requests++;
+      snprintf (name, sizeof name, "../subs/feed_%.24s.xml", req + 33);
+      snprintf (head, sizeof head, "%s/%s", fixdir, name);
+      if ((t = fopen (head, "rb")))
+        {
+          fclose (t);
+          body = load (name, &len);
+        }
+      else
+        {
+          body = strdup ("<html>404</html>");
+          len = strlen (body);
+          code = 404;
+        }
     }
   else if (strstr (req, "Host: raw.githubusercontent.com"))
     {
@@ -530,9 +554,10 @@ int main (int argc, char **argv)
   {
     const int *m = (const int *) last_menu;          /* title 3 words, colours, width, height, gap; items of 6 words */
     CHECK (m && !strcmp ((const char *) &m[7 + 3], "Info") && m[7 + 1] == 3, "Info's submenu is the Info box");
-    CHECK (m && !strcmp ((const char *) &m[7 + 5 * 6 + 3], "Quit") && (m[7 + 5 * 6] & 0x80), "Quit is last");
-    CHECK (m && !strcmp ((const char *) &m[7 + 4 * 6 + 3], "Sound"), "Sound before it");
-    CHECK (m && !strcmp ((const char *) &m[7 + 3 * 6 + 3], "Frame rate"), "Frame rate before that");
+    CHECK (m && !strcmp ((const char *) &m[7 + 7 * 6 + 3], "Quit") && (m[7 + 7 * 6] & 0x80), "Quit is last");
+    CHECK (m && !strcmp ((const char *) &m[7 + 6 * 6 + 3], "Sound"), "Sound before it");
+    CHECK (m && !strcmp ((const char *) &m[7 + 5 * 6 + 3], "Frame rate"), "Frame rate before that");
+    CHECK (m && (m[7 + 2 * 6 + 2] & 0x100) && !strcmp ((const char *) m[7 + 2 * 6 + 3], "Subscriptions"), "Subscriptions");
     menus_made = 0;
   }
 
@@ -640,7 +665,7 @@ int main (int argc, char **argv)
   /* Menu: Quality > 720p, then play again */
   click_tile (3, 100, 100, 2);
   {
-    int sel[4] = { 5, 2, -1, -1 };              /* Play, Related, Channel, Back, Refresh, Quality > 720p */
+    int sel[4] = { 6, 2, -1, -1 };              /* Play, Related, Channel, Subscribe, Back, Refresh, Quality > 720p */
     ui_event (9, sel);
     click_tile (3, 100, 100, 4);
     pump ();
@@ -650,7 +675,7 @@ int main (int argc, char **argv)
   {
     int before = api_requests;
     const int *bar = wins[2].block;
-    CHECK (bar[21] == 7 && !strcmp ((const char *) bar[22 + 8 * 6 + 5], "Refresh"), "a Refresh button");
+    CHECK (bar[21] == 8 && !strcmp ((const char *) bar[22 + 8 * 6 + 5], "Refresh"), "a Refresh button");
     click (2, 6, 0, 0, 4);
     CHECK (strstr (status (), "Refreshing") != NULL, "refreshing...");
     pump ();
@@ -664,8 +689,8 @@ int main (int argc, char **argv)
     click_tile (3, 100, 100, 2);
     {
       const int *m = (const int *) last_menu;
-      int sel[4] = { 4, -1, -1, -1 };          /* Play, Related, Channel, Back, Refresh */
-      CHECK (m && !strcmp ((const char *) &m[7 + 4 * 6 + 3], "Refresh"), "Refresh on the menu");
+      int sel[4] = { 5, -1, -1, -1 };          /* Play, Related, Channel, Subscribe, Back, Refresh */
+      CHECK (m && !strcmp ((const char *) &m[7 + 5 * 6 + 3], "Refresh"), "Refresh on the menu");
       ui_event (9, sel);
       pump ();
       CHECK (api_requests == before + 3, "and from the menu");
@@ -677,7 +702,7 @@ int main (int argc, char **argv)
   {
     char path[600], text[600] = "";
     FILE *f;
-    int sel[4] = { 6, 1, -1, -1 };              /* ... Quality, Frame rate > 60 a second */
+    int sel[4] = { 7, 1, -1, -1 };              /* ... Quality, Frame rate > 60 a second */
     size_t n;
     click_tile (3, 100, 100, 2);
     ui_event (9, sel);
@@ -817,7 +842,7 @@ int main (int argc, char **argv)
     const int *m;
     int sel[4] = { 2, -1, -1, -1 };              /* Any time, Today, This week */
     int before;
-    CHECK (bar[21] == 7, "the toolbar has the date filter's two icons (and Refresh)");
+    CHECK (bar[21] == 8, "the toolbar has the date filter's two icons (and Refresh, Subscriptions)");
     CHECK (!strcmp (date_icon, "Any time"), "it starts at Any time");
     CHECK (bar[22 + 8 * 5 + 4] & 2 && strstr ((const char *) bar[22 + 8 * 5 + 6], "Sgright"),
            "a pop-up menu button");
@@ -906,8 +931,8 @@ int main (int argc, char **argv)
     click_tile (1, 100, 100, 2);
     {
       const int *m = (const int *) last_menu;
-      int sel[4] = { 7, 1, -1, -1 };            /* Play, Related, Channel, Back, Refresh, Quality, Frame rate, Sound > Original */
-      CHECK (m && !strcmp ((const char *) &m[7 + 7 * 6 + 3], "Sound") && (m[7 + 7 * 6] & 0x80), "the Sound menu, last");
+      int sel[4] = { 8, 1, -1, -1 };            /* Play, Related, Channel, Subscribe, Back, Refresh, Quality, Frame rate, Sound > Original */
+      CHECK (m && !strcmp ((const char *) &m[7 + 8 * 6 + 3], "Sound") && (m[7 + 8 * 6] & 0x80), "the Sound menu, last");
       ui_event (9, sel);
     }
     CHECK (!strcmp (yt_config_get ("audio_language"), "original"), "Sound > Original chosen");
@@ -926,6 +951,113 @@ int main (int argc, char **argv)
     CHECK (hls_requests == 1 && saved_data && strstr (saved_data, "itag=136") && !strstr (saved_data, "m3u8_native")
            && started[0], "HLS unusable: DASH");
     hls_broken = 0;
+  }
+
+  /* subscriptions: none yet; a Takeout list dropped on the window; the
+     feeds (one channel's gone: its page instead); Unsubscribe; Subscribe */
+  {
+    int sel[4] = { 2, -1, -1, -1 };              /* icon bar menu > Subscriptions */
+    char path[600], text[2000] = "";
+    FILE *f;
+    size_t n;
+    click (-2, 0, 100, 20, 2);
+    ui_event (9, sel);
+    CHECK (!strcmp (title (), "TubeSearch: Subscriptions") && !strcmp (status (), "No subscriptions yet"), "Subscriptions: none yet");
+    redraw ();
+    CHECK (strstr (drawn, "Google Takeout") != NULL, "it says how to add some");
+    {
+      int msg[64];
+      memset (msg, 0, sizeof msg);
+      msg[0] = 256; msg[1] = 99; msg[2] = 1234; msg[4] = 3;       /* Message_DataLoad from task 99 */
+      msg[5] = 1; msg[6] = -1; msg[10] = 0xDFE;
+      snprintf ((char *) &msg[11], 200, "%s/../subs/takeout_subscriptions.csv", fixdir);
+      acks_sent = 0;
+      ui_event (17, msg);
+      CHECK (acks_sent == 1, "the drop is acknowledged");
+      CHECK (!strcmp (title (), "TubeSearch: My channels") && strstr (status (), "3 channels added from the 3"),
+             "3 channels brought in, shown");
+      redraw ();
+      CHECK (strstr (drawn, "Joueur du Grenier\n") && strstr (drawn, "Gone Channel\n"), "the channels' tiles");
+      msg[2] = 1235; msg[3] = 0; msg[4] = 3;     /* (the ack was written over it) */
+      snprintf ((char *) &msg[11], 200, "%s/../hls/master.m3u8", fixdir);
+      report[0] = 0;
+      acks_sent = 0;
+      ui_event (17, msg);
+      CHECK (acks_sent == 0 && strstr (report, "list of subscriptions"), "another file: refused, not taken");
+    }
+    snprintf (path, sizeof path, "%s.TubeSearch.Subscriptions", getenv ("Choices$Write"));
+    if ((f = fopen (path, "r")))
+      {
+        n = fread (text, 1, sizeof text - 1, f);
+        text[n] = 0;
+        fclose (f);
+      }
+    CHECK (strstr (text, "UCaaaaaaaaaaaaaaaaaaaaaa\tJoueur du Grenier\t") && strstr (text, "seen 0\n"), "kept in Choices");
+    /* the toolbar's Subscriptions: the three channels' feeds */
+    feed_requests = 0;
+    {
+      int before = api_requests;
+      click (2, 7, 0, 0, 4);
+      CHECK (strstr (status (), "Reading the channels") != NULL, "reading...");
+      redraw ();
+      CHECK (!strstr (drawn, "Les jeux d'horreur & moi"), "nothing shown till they're all read (and sorted)");
+      pump ();
+      CHECK (feed_requests == 3 && api_requests == before + 1, "three feeds, and the gone one's page");
+    }
+    CHECK (!strcmp (title (), "TubeSearch: Subscriptions") && strstr (status (), "videos from 3 channels"), "the subscriptions' videos");
+    CHECK (atoi (status ()) == 5 + 30, "5 from the feeds, 30 from the page");
+    redraw ();
+    CHECK (strstr (drawn, "Les jeux d'horreur & moi") != NULL, "the feeds' videos shown");
+    if ((f = fopen (path, "r")))
+      {
+        n = fread (text, 1, sizeof text - 1, f);
+        text[n] = 0;
+        fclose (f);
+      }
+    CHECK (!strstr (text, "seen 0\n") && strstr (text, "seen "), "the time they were seen, kept");
+    /* left while reading, then Back: read again, not stuck */
+    click (2, 7, 0, 0, 4);
+    type_and_search ("test");
+    pump ();
+    click (2, 0, 0, 0, 4);
+    CHECK (!strcmp (title (), "TubeSearch: Subscriptions") && strstr (status (), "Reading the channels"), "Back to it: reading again");
+    pump ();
+    CHECK (strstr (status (), "videos from 3 channels") != NULL, "and read");
+    CHECK (!strstr (status (), " new"), "the ones seen before aren't new now");
+    /* My channels (Adjust on the button) > Unsubscribe the first */
+    click (2, 7, 0, 0, 1);
+    CHECK (!strcmp (title (), "TubeSearch: My channels") && !strcmp (status (), "3 channels"), "My channels");
+    click_tile (0, 100, 100, 2);
+    {
+      const int *m = (const int *) last_menu;
+      int us[4] = { 1, -1, -1, -1 };              /* Open, Unsubscribe */
+      CHECK (m && !strcmp ((const char *) &m[7 + 6 + 3], "Unsubscribe"), "a subscribed channel: Unsubscribe");
+      ui_event (9, us);
+    }
+    CHECK (!strcmp (status (), "2 channels"), "unsubscribed: 2 left");
+    if ((f = fopen (path, "r")))
+      {
+        n = fread (text, 1, sizeof text - 1, f);
+        text[n] = 0;
+        fclose (f);
+      }
+    CHECK (!strstr (text, "UCaaaaaaaaaaaaaaaaaaaaaa") && strstr (text, "UCbbbbbbbbbbbbbbbbbbbbbb"), "and in the file");
+    /* Subscribe from a video's menu (a search result's channel) */
+    type_and_search ("test");
+    pump ();
+    click_tile (0, 100, 100, 2);
+    {
+      const int *m = (const int *) last_menu;
+      int sub[4] = { 3, -1, -1, -1 };             /* Play, Related, Channel, Subscribe */
+      CHECK (m && !strcmp ((const char *) &m[7 + 3 * 6 + 3], "Subscribe"), "a video's channel: Subscribe");
+      ui_event (9, sub);
+    }
+    CHECK (strstr (status (), "Subscribed to ") && strstr (status (), "(3 channels)"), "subscribed");
+    click_tile (0, 100, 100, 2);
+    {
+      const int *m = (const int *) last_menu;
+      CHECK (m && !strcmp ((const char *) &m[7 + 3 * 6 + 3], "Unsubscribe"), "now Unsubscribe");
+    }
   }
 
   /* Reel not known: said so, nothing started */

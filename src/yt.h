@@ -84,9 +84,12 @@ typedef struct {
   char *channel;            /* a video's channel name, or "" */
   char *meta;               /* "1.2M views · 3 years ago", "Subscribers..." */
   char *thumb_url;          /* the picture to show */
+  long published;           /* Unix time, when known (subscriptions' feeds), else 0 */
 } yt_item;
 
-enum { YT_LIST_SEARCH, YT_LIST_RELATED, YT_LIST_CHANNEL };
+enum { YT_LIST_SEARCH, YT_LIST_RELATED, YT_LIST_CHANNEL,
+       YT_LIST_SUBS,          /* the subscribed channels' newest videos (subs.h; not api_list's) */
+       YT_LIST_MYCHANNELS };  /* the subscribed channels (made here, not fetched) */
 
 typedef struct {
   yt_item *items;

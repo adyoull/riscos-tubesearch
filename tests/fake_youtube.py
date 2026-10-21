@@ -58,7 +58,14 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         host = self.headers.get('Host')
         self.record({'method': 'GET', 'path': self.path, 'host': host})
-        if host == 'manifest.googlevideo.com' and self.path.startswith('/api/manifest/hls_variant/'):
+        if host == 'www.youtube.com' and self.path.startswith('/feeds/videos.xml?channel_id='):
+            # a channel's feed (tests/subs), or 404 as for a channel that's gone
+            f = os.path.join(os.path.dirname(HLS_MASTER), '..', 'subs', 'feed_%s.xml' % self.path.split('=', 1)[1])
+            if os.path.exists(f):
+                self.send_body(200, open(f, 'rb').read(), 'text/xml; charset=UTF-8')
+            else:
+                self.send_body(404, b'<html>404</html>', 'text/html')
+        elif host == 'manifest.googlevideo.com' and self.path.startswith('/api/manifest/hls_variant/'):
             # the HLS master playlist (a synthetic one in YouTube's form)
             self.send_body(200, open(HLS_MASTER, 'rb').read(), 'application/vnd.apple.mpegurl')
         elif host == 'i.ytimg.com' and self.path.endswith('/mqdefault.jpg'):

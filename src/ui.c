@@ -21,6 +21,8 @@
 #include "text.h"
 #include "thumbs.h"
 #include "proxy.h"
+#include "subs.h"
+#include <time.h>
 #include "transport.h"
 #include "ejsupd.h"
 #include "yt.h"
@@ -40,6 +42,8 @@ enum { Null_Reason = 0, Redraw_Window_Request = 1, Open_Window_Request = 2, Clos
        User_Message_Recorded = 18 };
 enum { Button_Adjust = 1, Button_Menu = 2, Button_Select = 4 };
 #define Message_Quit 0
+#define Message_DataLoad 3
+#define Message_DataLoadAck 4
 #define Message_ModeChange 0x400C1
 #define Message_FontChanged 0x400CF
 
@@ -54,7 +58,7 @@ enum { Button_Adjust = 1, Button_Menu = 2, Button_Select = 4 };
 #define TEXT_W (TILE_W - 40)
 
 /* toolbar icons */
-enum { I_BACK, I_FIELD, I_SEARCH, I_STATUS, I_DATE, I_DATEPOP, I_REFRESH };
+enum { I_BACK, I_FIELD, I_SEARCH, I_STATUS, I_DATE, I_DATEPOP, I_REFRESH, I_SUBS };
 
 #define MAX_PAGES 24
 
@@ -73,6 +77,8 @@ typedef struct page {
   api_op *op;                 /* fetching (the first part or more) */
   int scroll_y;
   int date;                   /* a search's upload-date filter (YT_DATE_*) */
+  long seen;                  /* subscriptions: newer than this was marked new */
+  api_feed_result feed_res;   /* subscriptions: how the reading went */
   char status[200];
 } page;
 
@@ -87,6 +93,8 @@ static int play_answered;                    /* play_done has been called for th
 static char play_id[40];
 static int play_file_n;
 static int quality = 1080;
+static yt_subs subs;                         /* the subscriptions (subs.h) */
+static char subs_path[300];
 static int search_date;                      /* YT_DATE_*: for the next search */
 static char date_buf[16] = "Any time";
 
@@ -373,6 +381,15 @@ static void draw (int *b, int more)
           const char *t = p ? p->status : "Type what you'd like to watch in the box above, then press Return.";
           text_colour (0x60606000u, 0xFFFFFF00u);
           text_plot (t, ox + PAD + 20, oy - TOOLBAR_H - PAD - 60);
+          if (p && (p->kind == YT_LIST_SUBS || p->kind == YT_LIST_MYCHANNELS) && !subs.n)
+            {
+              text_plot ("Choose Subscribe on a channel's menu (or a video's) to add it here.",
+                         ox + PAD + 20, oy - TOOLBAR_H - PAD - 120);
+              text_plot ("Or drop a list of your subscriptions on this window: Google Takeout's",
+                         ox + PAD + 20, oy - TOOLBAR_H - PAD - 170);
+              text_plot ("subscriptions.csv, or NewPipe's or FreeTube's export.",
+                         ox + PAD + 20, oy - TOOLBAR_H - PAD - 220);
+            }
           if (!p)
             {
               text_plot ("Select on a video plays it in Reel. Adjust shows related videos.",
@@ -450,11 +467,12 @@ static void icon (int *ic, int x0, int y0, int x1, int y1, int flags, char *text
 
 static int create_bar (void)
 {
-  static char back_text[] = "Back", search_text[] = "Search", refresh_text[] = "Refresh", refresh_valid[] = "R5,3";
+  static char back_text[] = "Back", search_text[] = "Search", refresh_text[] = "Refresh", refresh_valid[] = "R5,3",
+    subs_text[] = "Subscriptions", subs_valid[] = "R5,3";
   static char back_valid[] = "R5,3", search_valid[] = "R6,3", field_valid[] = "Pptr_write;R7",
     status_valid[] = "";
   static char date_valid[] = "R2", pop_text[] = "", pop_valid[] = "Sgright;R5,3";
-  int b[22 + 7 * 8];
+  int b[22 + 8 * 8];
   memset (b, 0, sizeof b);
   b[0] = 0; b[1] = 0; b[2] = 1000; b[3] = TOOLBAR_H;
   b[6] = -1;
@@ -467,17 +485,18 @@ static int create_bar (void)
   b[14] = 0;
   b[15] = 0;
   b[16] = 1;
-  b[21] = 7;
+  b[21] = 8;
   /* Back, the search box, Search, the status line; then the upload-date
      filter (a display field and its pop-up menu button) between Search
      and the status line */
   icon (&b[22], 12, -72, 136, -12, 0x1700313D, back_text, back_valid, sizeof back_text);
-  icon (&b[30], 300, -72, 1060, -12, 0x0700F135, field_buf, field_valid, sizeof field_buf);
+  icon (&b[30], 532, -72, 1060, -12, 0x0700F135, field_buf, field_valid, sizeof field_buf);
   icon (&b[38], 1072, -72, 1232, -12, 0x1700313D, search_text, search_valid, sizeof search_text);
   icon (&b[46], 1546, -72, 3800, -12, 0x15000131, status_buf, status_valid, sizeof status_buf);
   icon (&b[54], 1248, -68, 1476, -16, 0x1700313D, date_buf, date_valid, sizeof date_buf);
   icon (&b[62], 1480, -68, 1528, -16, 0x1700313F, pop_text, pop_valid, sizeof pop_text);
   icon (&b[70], 148, -72, 288, -12, 0x1700313D, refresh_text, refresh_valid, sizeof refresh_text);
+  icon (&b[78], 300, -72, 520, -12, 0x1700313D, subs_text, subs_valid, sizeof subs_text);
   return fail (_swix (Wimp_CreateWindow, _IN (1) | _OUT (0), b, &bar));
 }
 
@@ -601,12 +620,75 @@ static void free_page (page *p)
   free (p);
 }
 
+/* ---- subscriptions (subs.h) ---------------------------------------------- */
+
+#define FEED_MAX 150                         /* the newest this many (the pictures kept) */
+
+static void subs_store (void)
+{
+  if (subs_path[0] && subs_save (&subs, subs_path))
+    ui_report ("The subscriptions couldn't be saved");
+}
+
+/* a name shown here (the desktop's alphabet) back into UTF-8 for the file */
+static char *to_utf8 (const char *s)
+{
+  size_t n = strlen (s);
+  char *o = malloc (n * 2 + 1), *w = o;
+  if (!o)
+    return NULL;
+  for (const unsigned char *r = (const unsigned char *) s; *r; r++)
+    if (*r < 0x80 || text_utf8_desktop)
+      *w++ = (char) *r;
+    else
+      {
+        *w++ = (char) (0xC0 | (*r >> 6));
+        *w++ = (char) (0x80 | (*r & 63));
+      }
+  *w = 0;
+  return o;
+}
+
+static int count_new (const page *p)
+{
+  int n = 0;
+  for (int i = 0; i < p->list.n; i++)
+    n += p->seen && p->list.items[i].published > p->seen;
+  return n;
+}
+
 static void list_done (int added, const char *err, void *ctx)
 {
   page *p = ctx;
   p->op = NULL;
   if (added < 0)
     snprintf (p->status, sizeof p->status, "%s", err);
+  else if (p->kind == YT_LIST_SUBS || p->kind == YT_LIST_MYCHANNELS)
+    {
+      wrap_gen++;                                         /* (the list is new: lay its titles out again) */
+      free (p->heading);
+      p->heading = strdup (p->kind == YT_LIST_SUBS ? "Subscriptions" : "My channels");
+      if (!subs.n)
+        snprintf (p->status, sizeof p->status, "No subscriptions yet");
+      else if (p->kind == YT_LIST_MYCHANNELS)
+        snprintf (p->status, sizeof p->status, "%d channel%s", subs.n, subs.n == 1 ? "" : "s");
+      else
+        {
+          int n = count_new (p);
+          snprintf (p->status, sizeof p->status, "%d video%s from %d channel%s", p->list.n, p->list.n == 1 ? "" : "s",
+                    subs.n, subs.n == 1 ? "" : "s");
+          if (n)
+            snprintf (p->status + strlen (p->status), sizeof p->status - strlen (p->status), ", %d new", n);
+          if (p->feed_res.failed)
+            snprintf (p->status + strlen (p->status), sizeof p->status - strlen (p->status),
+                      " (%d couldn't be read)", p->feed_res.failed);
+          /* these are seen now: next time, only newer ones are new (unless
+             some channels couldn't be read, whose new videos aren't seen yet) */
+          if (!p->feed_res.failed && p->feed_res.newest > subs.seen)
+            subs.seen = p->feed_res.newest;
+          subs_store ();                                 /* (and the names the feeds brought up to date) */
+        }
+    }
   else
     {
       if (!p->heading || p->kind != YT_LIST_SEARCH)
@@ -664,6 +746,49 @@ static void check_proxy (void)
     ui_report (err);
 }
 
+static void feed_progress (int done, int total, void *ctx)
+{
+  page *p = ctx;
+  snprintf (p->status, sizeof p->status, "Reading the channels: %d of %d...", done, total);
+  if (p == cur ())
+    set_status ("%s", p->status);
+}
+
+/* Starts fetching p's list from the start (the page's own way): p->op,
+   and p->status says so. A list made here (My channels) is done at once. */
+static void fetch (page *p, const char *doing)
+{
+  snprintf (p->status, sizeof p->status, "%s", doing);
+  if (p->kind == YT_LIST_MYCHANNELS)
+    {
+      p->op = NULL;
+      list_done (subs_channel_list (&subs, &p->list), NULL, p);
+      return;
+    }
+  if (p->kind == YT_LIST_SUBS)
+    {
+      const char **ids = malloc ((size_t) (subs.n + 1) * sizeof *ids);
+      if (!ids)
+        {
+          snprintf (p->status, sizeof p->status, "Out of memory");
+          return;
+        }
+      for (int i = 0; i < subs.n; i++)
+        ids[i] = subs.v[i].id;
+      p->seen = subs.seen;
+      snprintf (p->status, sizeof p->status, "Reading the channels: 0 of %d...", subs.n);
+      memset (&p->feed_res, 0, sizeof p->feed_res);
+      p->op = api_feed (ids, subs.n, p->seen, FEED_MAX, &p->list, list_done, feed_progress, p, &subs, &p->feed_res);
+      free (ids);
+      if (!p->op && !strncmp (p->status, "Reading the channels: 0", 23))
+        snprintf (p->status, sizeof p->status, "Out of memory");
+      return;
+    }
+  p->op = api_list (p->kind, p->arg, 0, p->date, &p->list, list_done, p);
+  if (!p->op && !p->list.n && !strcmp (p->status, doing))
+    snprintf (p->status, sizeof p->status, "Out of memory");
+}
+
 /* Shows a new page, fetching its list. */
 static void go (int kind, const char *arg, const char *heading)
 {
@@ -703,9 +828,7 @@ static void go (int kind, const char *arg, const char *heading)
     }
   pages[depth++] = p;
   thumbs_cancel_pending ();
-  p->op = api_list (kind, arg, 0, p->date, &p->list, list_done, p);
-  snprintf (p->status, sizeof p->status, "%s",
-            !p->op ? "Out of memory" : kind == YT_LIST_SEARCH ? "Searching..." : "Loading...");
+  fetch (p, kind == YT_LIST_SEARCH ? "Searching..." : "Loading...");
   set_status ("%s", p->status);
   set_title ();
   set_extent ();
@@ -732,8 +855,7 @@ static void go_back (void)
   if (!p->list.n && !p->op)
     {
       check_proxy ();
-      p->op = api_list (p->kind, p->arg, 0, p->date, &p->list, list_done, p);
-      snprintf (p->status, sizeof p->status, "Loading...");
+      fetch (p, "Loading...");
       set_status ("%s", p->status);
     }
   scroll_to (p->scroll_y);
@@ -757,8 +879,7 @@ static void refresh (void)
   p->text_cap = 0;
   wrap_gen++;
   thumbs_cancel_pending ();
-  p->op = api_list (p->kind, p->arg, 0, p->date, &p->list, list_done, p);
-  snprintf (p->status, sizeof p->status, "%s", p->op ? "Refreshing..." : "Out of memory");
+  fetch (p, "Refreshing...");
   set_status ("%s", p->status);
   set_extent ();
   scroll_to (0);
@@ -1079,10 +1200,11 @@ static void play (const yt_item *it)
 /* ---- menus -------------------------------------------------------------- */
 
 typedef struct { int flags, submenu, icon_flags; int data[3]; } menu_item;
-typedef struct { char title[12]; unsigned char colours[4]; int width, height, gap; menu_item item[8]; } menu_block;
+typedef struct { char title[12]; unsigned char colours[4]; int width, height, gap; menu_item item[10]; } menu_block;
 
 static menu_block quality_menu, bar_menu, tile_menu, date_menu, sound_menu, fps_menu;
 
+static void data_load (int *b);
 static void menu_init (menu_block *m, const char *title, int width);
 static void menu_add (menu_block *m, int i, const char *text, int submenu, int flags);
 
@@ -1252,12 +1374,58 @@ static void open_iconbar_menu (int x)
   menu_init (&bar_menu, APP_NAME, 240);
   menu_add (&bar_menu, 0, "Info", info, 0);             /* (a window handle: the Wimp opens it) */
   menu_add (&bar_menu, 1, "Search...", 0, 0);
-  menu_add (&bar_menu, 2, "Quality", (int) &quality_menu, 0);
-  menu_add (&bar_menu, 3, "Frame rate", (int) &fps_menu, 0);
-  menu_add (&bar_menu, 4, "Sound", (int) &sound_menu, 2 /* dotted line */);
-  menu_add (&bar_menu, 5, "Quit", 0, 0x80);
+  {
+    static char subs_item[] = "Subscriptions";               /* (over 12 letters: indirected) */
+    menu_add_ind (&bar_menu, 2, subs_item, sizeof subs_item, 0);
+  }
+  menu_add (&bar_menu, 3, "My channels", 0, 2);
+  menu_add (&bar_menu, 4, "Quality", (int) &quality_menu, 0);
+  menu_add (&bar_menu, 5, "Frame rate", (int) &fps_menu, 0);
+  menu_add (&bar_menu, 6, "Sound", (int) &sound_menu, 2 /* dotted line */);
+  menu_add (&bar_menu, 7, "Quit", 0, 0x80);
   menu_open = M_ICONBAR;
-  fail (_swix (Wimp_CreateMenu, _INR (1, 3), &bar_menu, x - 64, 96 + 6 * 44));
+  fail (_swix (Wimp_CreateMenu, _INR (1, 3), &bar_menu, x - 64, 96 + 8 * 44 + 2 * 24));
+}
+
+/* The window menu's Subscribe/Unsubscribe: which channel, and where things are */
+static struct { char id[40]; char name[200]; char thumb[400]; } menu_sub;
+static struct { int sub, back, refresh, quality; } menu_at;
+
+static void sub_choice (const char *id, const char *name, const char *thumb)
+{
+  if (!id || !subs_is_channel_id (id, strlen (id)))
+    {
+      menu_sub.id[0] = 0;
+      return;
+    }
+  snprintf (menu_sub.id, sizeof menu_sub.id, "%s", id);
+  snprintf (menu_sub.name, sizeof menu_sub.name, "%s", name ? name : "");
+  snprintf (menu_sub.thumb, sizeof menu_sub.thumb, "%s", thumb ? thumb : "");
+}
+
+/* Subscribe or Unsubscribe from the menu */
+static void toggle_sub (void)
+{
+  page *p = cur ();
+  if (!menu_sub.id[0])
+    return;
+  if (subs_find (&subs, menu_sub.id) >= 0)
+    {
+      subs_remove (&subs, menu_sub.id);
+      set_status ("Unsubscribed from %s", menu_sub.name);
+    }
+  else
+    {
+      char *u = to_utf8 (menu_sub.name);
+      if (!u || subs_add (&subs, menu_sub.id, u, menu_sub.thumb) < 0)
+        ui_report ("Out of memory");
+      else
+        set_status ("Subscribed to %s (%d channel%s)", menu_sub.name, subs.n, subs.n == 1 ? "" : "s");
+      free (u);
+    }
+  subs_store ();
+  if (p && p->kind == YT_LIST_MYCHANNELS)
+    refresh ();                                          /* (the list shown changes) */
 }
 
 static void open_tile_menu (int i, int x, int y)
@@ -1278,24 +1446,44 @@ static void open_tile_menu (int i, int x, int y)
           menu_add (&tile_menu, n++, "Play", 0, 0);
           menu_add (&tile_menu, n++, "Related", 0, 0);
           snprintf (tile_menu_channel, sizeof tile_menu_channel, "Channel: %s", it->channel);
-          menu_add_ind (&tile_menu, n++, tile_menu_channel, sizeof tile_menu_channel, 2);
+          menu_add_ind (&tile_menu, n++, tile_menu_channel, sizeof tile_menu_channel, 0);
           if (!it->channel_id[0])
             tile_menu.item[n - 1].icon_flags |= 1 << 22;      /* shaded */
+          sub_choice (it->channel_id, it->channel, "");
         }
       else
-        menu_add (&tile_menu, n++, "Open", 0, 2);
+        {
+          menu_add (&tile_menu, n++, "Open", 0, 0);
+          sub_choice (it->id, it->title, it->thumb_url);
+        }
     }
   else
     {
       menu_tile = -1;
       menu_init (&tile_menu, APP_NAME, 300);
+      /* a channel's own page: that channel */
+      if (p && p->kind == YT_LIST_CHANNEL)
+        sub_choice (p->arg, p->list.title ? p->list.title : p->heading ? p->heading : "", "");
+      else
+        menu_sub.id[0] = 0;
     }
+  menu_at.sub = -1;
+  if (menu_sub.id[0])
+    {
+      menu_at.sub = n;
+      menu_add (&tile_menu, n++, subs_find (&subs, menu_sub.id) >= 0 ? "Unsubscribe" : "Subscribe", 0, 2);
+    }
+  else if (n)
+    tile_menu.item[n - 1].flags |= 2;                      /* (the dotted line) */
+  menu_at.back = n;
   menu_add (&tile_menu, n++, "Back", 0, 0);
   if (depth <= 1)
     tile_menu.item[n - 1].icon_flags |= 1 << 22;
+  menu_at.refresh = n;
   menu_add (&tile_menu, n++, "Refresh", 0, 0);
   if (!depth)
     tile_menu.item[n - 1].icon_flags |= 1 << 22;
+  menu_at.quality = n;
   menu_add (&tile_menu, n++, "Quality", (int) &quality_menu, 0);
   menu_add (&tile_menu, n++, "Frame rate", (int) &fps_menu, 0);
   menu_add (&tile_menu, n++, "Sound", (int) &sound_menu, 0x80);
@@ -1332,13 +1520,17 @@ static int menu_selection (const int *sel)
     {
       if (sel[0] == 1)
         show_window (1);
-      else if (sel[0] == 2 && sel[1] >= 0)
-        set_quality (sel[1]);
-      else if (sel[0] == 3 && sel[1] >= 0)
-        choose_fps (sel[1]);
+      else if (sel[0] == 2)
+        go (YT_LIST_SUBS, "subscriptions", "Subscriptions");
+      else if (sel[0] == 3)
+        go (YT_LIST_MYCHANNELS, "channels", "My channels");
       else if (sel[0] == 4 && sel[1] >= 0)
+        set_quality (sel[1]);
+      else if (sel[0] == 5 && sel[1] >= 0)
+        choose_fps (sel[1]);
+      else if (sel[0] == 6 && sel[1] >= 0)
         choose_sound (sel[1]);
-      else if (sel[0] == 5)
+      else if (sel[0] == 7)
         return 1;
       if (adjust)
         {
@@ -1353,10 +1545,9 @@ static int menu_selection (const int *sel)
     {
       page *p = cur ();
       const yt_item *it = p && menu_tile >= 0 && menu_tile < p->list.n ? &p->list.items[menu_tile] : NULL;
-      int i = sel[0], base = 0;
+      int i = sel[0], q = menu_at.quality;
       if (it && it->kind == YT_VIDEO)
         {
-          base = 3;
           if (i == 0)
             play (it);
           else if (i == 1)
@@ -1364,23 +1555,21 @@ static int menu_selection (const int *sel)
           else if (i == 2)
             open_channel (it);
         }
-      else if (it)
-        {
-          base = 1;
-          if (i == 0)
-            open_channel (it);
-        }
-      if (i == base)
+      else if (it && i == 0)
+        open_channel (it);
+      if (i == menu_at.sub && i >= 0)
+        toggle_sub ();
+      else if (i == menu_at.back)
         go_back ();
-      else if (i == base + 1)
+      else if (i == menu_at.refresh)
         refresh ();
-      else if (i == base + 2 && sel[1] >= 0)
+      else if (i == q && sel[1] >= 0)
         set_quality (sel[1]);
-      else if (i == base + 3 && sel[1] >= 0)
+      else if (i == q + 1 && sel[1] >= 0)
         choose_fps (sel[1]);
-      else if (i == base + 4 && sel[1] >= 0)
+      else if (i == q + 2 && sel[1] >= 0)
         choose_sound (sel[1]);
-      if (adjust && i >= base + 2 && i <= base + 4)
+      if (adjust && i >= q && i <= q + 2)
         {
           build_quality_menu ();
           build_fps_menu ();
@@ -1460,6 +1649,9 @@ static void click_bar (const int *b)
     go_back ();
   else if (b[4] == I_REFRESH)
     refresh ();
+  else if (b[4] == I_SUBS)
+    go (b[2] == Button_Adjust ? YT_LIST_MYCHANNELS : YT_LIST_SUBS, b[2] == Button_Adjust ? "channels" : "subscriptions",
+        b[2] == Button_Adjust ? "My channels" : "Subscriptions");
   else if (b[4] == I_SEARCH)
     search ();
   else if (b[4] == I_DATE || b[4] == I_DATEPOP)
@@ -1491,7 +1683,7 @@ static int create_iconbar_icon (void)
 
 int ui_init (void)
 {
-  static const int messages[] = { Message_ModeChange, Message_FontChanged, Message_TaskCloseDown, 0 };
+  static const int messages[] = { Message_DataLoad, Message_ModeChange, Message_FontChanged, Message_TaskCloseDown, 0 };
   char err[200];
   int alphabet = 0;
   const char *dir = getenv ("TubeSearch$Dir");
@@ -1519,6 +1711,12 @@ int ui_init (void)
     choices_path (path, sizeof path);           /* the menus' choices, last */
     if (path[0])
       yt_config_load (path);
+    if (choices)
+      {
+        snprintf (subs_path, sizeof subs_path, "%s.TubeSearch.Subscriptions", choices);
+        if (subs_load (&subs, subs_path))
+          ui_report ("The subscriptions couldn't be read");
+      }
   }
   quality = atoi (yt_config_get ("max_quality"));
   if (quality < 144)
@@ -1598,6 +1796,8 @@ int ui_event (int reason, int *b)
         return 1;
       if (b[4] == Message_TaskCloseDown && helper.running && b[1] == helper.task)
         helper_closed ();
+      if (b[4] == Message_DataLoad && (b[5] == win || b[5] == bar || b[5] == -2))
+        data_load (b);
       if (b[4] == Message_ModeChange || b[4] == Message_FontChanged)
         {
           read_screen ();
@@ -1611,6 +1811,51 @@ int ui_event (int reason, int *b)
       break;
     }
   return 0;
+}
+
+/* A file dropped on the window or the icon bar icon: a list of
+   subscriptions to bring in (subs_import). */
+static void data_load (int *b)
+{
+  const char *name = (const char *) &b[11];
+  FILE *f = fopen (name, "rb");
+  char *text = NULL, msg[300];
+  long n = 0;
+  int found = 0, added;
+  if (f && !fseek (f, 0, SEEK_END) && (n = ftell (f)) >= 0 && n < 8 * 1024 * 1024 && !fseek (f, 0, SEEK_SET)
+      && (text = malloc ((size_t) n + 1)) && fread (text, 1, (size_t) n, f) == (size_t) n)
+    text[n] = 0;
+  else
+    {
+      free (text);
+      text = NULL;
+    }
+  if (f)
+    fclose (f);
+  if (!text)
+    {
+      ui_report ("That file couldn't be read");
+      return;
+    }
+  added = subs_import (&subs, text, (size_t) n, &found);
+  free (text);
+  if (added < 0)
+    {
+      ui_report ("That isn't a list of subscriptions TubeSearch knows: it reads Google Takeout's "
+                 "subscriptions.csv, and NewPipe's and FreeTube's exports");
+      return;
+    }
+  b[3] = b[2];                                    /* DataLoadAck: taken */
+  b[4] = Message_DataLoadAck;
+  _swix (Wimp_SendMessage, _INR (0, 2), 17, b, b[1]);
+  subs_store ();
+  snprintf (msg, sizeof msg, "%d channel%s added from the %d in that list (%d subscriptions now)", added,
+            added == 1 ? "" : "s", found, subs.n);
+  if (cur () && cur ()->kind == YT_LIST_MYCHANNELS)
+    refresh ();                                          /* (showing them already) */
+  else
+    go (YT_LIST_MYCHANNELS, "channels", "My channels");
+  set_status ("%s", msg);
 }
 
 void ui_close (void)

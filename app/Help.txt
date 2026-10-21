@@ -30,19 +30,44 @@ In the window:
   Select on a channel   (in search results) its videos
   More (the last tile)  fetches the next part of the list
   Back                  the page before (up to 24 are kept)
+  Subscriptions         the newest videos of the channels you follow
+                        (Adjust: the channels); see Subscriptions below
   Refresh (or F5)       the page on screen fetched again: new results, a
                         channel's newest videos, or a live stream that has
                         started since
-  Menu                  Play, Related, Channel, Back, Refresh, Quality,
-                        Frame rate and Sound
+  Menu                  Play, Related, Channel, Subscribe, Back, Refresh,
+                        Quality, Frame rate and Sound
+
+Subscriptions
+-------------
+TubeSearch keeps its own list of channels you follow, on this machine; no
+YouTube account is involved. Subscribe on a channel's menu (or a video's,
+for its channel) adds one; Unsubscribe takes it off.
+
+  Subscriptions (the toolbar button, or the icon bar menu)
+                        the newest videos from all of them, newest first;
+                        ones since you last looked are marked New
+  Adjust on Subscriptions, or My channels on the icon bar menu
+                        the channels themselves (Select opens one)
+
+To bring in the channels you follow on YouTube, drop a list of them on
+TubeSearch's window or icon bar icon: Google Takeout's subscriptions.csv
+(takeout.google.com, YouTube and YouTube Music, subscriptions), or an
+export from NewPipe or FreeTube. Channels already there aren't added
+twice; their names are brought up to date.
+
+The videos come from each channel's YouTube feed, one channel at a time
+(the status line counts them), so a long list takes a while. A channel
+whose feed can't be read is looked at on its page instead. The list is
+kept in Choices:TubeSearch.Subscriptions.
 
 Beside Search, the Uploaded filter (click it, or its menu button) limits
 searches to videos uploaded Today, This week, This month or This year, or
 Any time. Changing it searches again with the same words; Back returns to
 the results before. Config's search_date sets where it starts.
 
-Menu on the icon bar icon has Info (the version), Search..., Quality,
-Frame rate, Sound and Quit.
+Menu on the icon bar icon has Info (the version), Search...,
+Subscriptions, My channels, Quality, Frame rate, Sound and Quit.
 
 Quality (on the menus) is the tallest video asked for: 360p, 480p,
 720p or 1080p (the default). Frame rate is the most frames a second: 30
@@ -151,6 +176,8 @@ and find faults (and the JavaScript helper):
   tscli -proxy <URL>|none ...   a proxy instead of http_proxy
   tscli -sound original ...     the sound track: mine, original or a language
   tscli -fps 60 ...             the most frames a second
+  tscli feed UC... [UC...]      those channels' newest videos
+  tscli import <file>           the channels in a subscriptions list
 
 Licence
 -------

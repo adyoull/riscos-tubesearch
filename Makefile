@@ -14,15 +14,15 @@ RCD_DIR ?= ../riscos-crossdev
 include $(RCD_DIR)/riscos.mk
 .DEFAULT_GOAL := all
 
-VERSION := 0.2.0-rc8
-DATE := 17 Oct 2026
+VERSION := 0.2.0-rc9
+DATE := 21 Oct 2026
 VERDEFS := -DTUBE_VERSION='"$(VERSION)"' -DTUBE_DATE='"$(DATE)"'
 OUT := out
 EJS_VERSION := 0.8.0
 EJS := ejs/$(EJS_VERSION)
 
-CORE := src/api.c src/http.c src/yt.c src/json.c src/text.c src/solvejob.c src/ejsupd.c src/sha3.c src/proxy.c
-CORE_H := src/api.h src/http.h src/yt.h src/json.h src/text.h src/transport.h src/solvejob.h src/ejsupd.h src/sha3.h src/proxy.h
+CORE := src/api.c src/http.c src/yt.c src/json.c src/text.c src/solvejob.c src/ejsupd.c src/sha3.c src/proxy.c src/subs.c
+CORE_H := src/api.h src/http.h src/yt.h src/json.h src/text.h src/transport.h src/solvejob.h src/ejsupd.h src/sha3.h src/proxy.h src/subs.h
 SOLVER := src/solverun.c src/jsolve.c
 QJS_DIR := third_party/quickjs
 QJS_SRC := $(QJS_DIR)/quickjs.c $(QJS_DIR)/libregexp.c $(QJS_DIR)/libunicode.c $(QJS_DIR)/cutils.c $(QJS_DIR)/dtoa.c
@@ -104,6 +104,10 @@ $(OUT)/test_http: tests/test_http.c src/http.c src/http.h
 	@mkdir -p $(OUT)
 	$(CC) $(HOST_CFLAGS) -o $@ tests/test_http.c src/http.c
 
+$(OUT)/test_subs: tests/test_subs.c src/subs.c src/subs.h src/yt.c src/json.c src/text.c
+	@mkdir -p $(OUT)
+	$(CC) $(HOST_CFLAGS) -o $@ tests/test_subs.c src/subs.c src/yt.c src/json.c src/text.c
+
 $(OUT)/test_proxy: tests/test_proxy.c src/proxy.c src/proxy_tunnel.c src/proxy.h
 	@mkdir -p $(OUT)
 	$(CC) $(HOST_CFLAGS) -o $@ tests/test_proxy.c src/proxy.c src/proxy_tunnel.c
@@ -127,10 +131,11 @@ $(OUT)/tscli-linux: src/tscli.c src/transport_openssl.c src/proxy_tunnel.c $(COR
 	$(CC) -std=gnu99 $(WARN) -g -O1 -Isrc -I$(QJS_DIR) -o $@ src/tscli.c src/transport_openssl.c src/proxy_tunnel.c $(CORE) $(SOLVER) \
 	  $(QJS_HOST) -lssl -lcrypto -lm -lpthread
 
-test-host: $(OUT)/test_yt $(OUT)/test_http $(OUT)/test_proxy $(OUT)/test_sha3 fixtures
+test-host: $(OUT)/test_yt $(OUT)/test_http $(OUT)/test_proxy $(OUT)/test_subs $(OUT)/test_sha3 fixtures
 	$(OUT)/test_yt $(FIX)
 	$(OUT)/test_http
 	$(OUT)/test_proxy
+	$(OUT)/test_subs tests/subs
 	$(OUT)/test_sha3 tests/sha3-vectors.txt ejs
 
 # yt-dlp's solver on a real player, in QuickJS: node's answers
@@ -157,6 +162,10 @@ test-e2e: $(OUT)/tscli-linux fixtures
 $(OUT)/test_yt.arm: tests/test_yt.c src/yt.c src/json.c src/text.c
 	@mkdir -p $(OUT)
 	$(LINUXARM_CC) $(LINUXARM_CFLAGS) -std=gnu99 -Isrc -o $@ $^
+$(OUT)/test_subs.arm: tests/test_subs.c src/subs.c src/yt.c src/json.c src/text.c
+	@mkdir -p $(OUT)
+	$(LINUXARM_CC) $(LINUXARM_CFLAGS) -std=gnu99 -Isrc -o $@ $^
+
 $(OUT)/test_http.arm: tests/test_http.c src/http.c
 	@mkdir -p $(OUT)
 	$(LINUXARM_CC) $(LINUXARM_CFLAGS) -std=gnu99 -Isrc -o $@ $^
@@ -167,8 +176,9 @@ $(OUT)/test_jsolve.arm: tests/test_jsolve.c src/jsolve.c src/json.c $(QJS_SRC)
 	@mkdir -p $(OUT)
 	$(LINUXARM_CC) $(LINUXARM_CFLAGS) -std=gnu99 -D_GNU_SOURCE -Isrc $(QJS_DEFS) -w -o $@ $^ -lm -lpthread
 
-test-qemu: $(OUT)/test_yt.arm $(OUT)/test_http.arm $(OUT)/test_sha3.arm $(OUT)/test_jsolve.arm fixtures
+test-qemu: $(OUT)/test_yt.arm $(OUT)/test_subs.arm $(OUT)/test_http.arm $(OUT)/test_sha3.arm $(OUT)/test_jsolve.arm fixtures
 	QEMU=$(QEMU_ALIGNTRAP) $(ALIGNTRAP) $(OUT)/test_yt.arm $(FIX)
+	QEMU=$(QEMU_ALIGNTRAP) $(ALIGNTRAP) $(OUT)/test_subs.arm tests/subs
 	QEMU=$(QEMU_ALIGNTRAP) $(ALIGNTRAP) $(OUT)/test_http.arm
 	QEMU=$(QEMU_ALIGNTRAP) $(ALIGNTRAP) $(OUT)/test_sha3.arm tests/sha3-vectors.txt ejs
 	QEMU=$(QEMU_ALIGNTRAP) $(ALIGNTRAP) $(OUT)/test_jsolve.arm $(FIX) $(EJS) -time

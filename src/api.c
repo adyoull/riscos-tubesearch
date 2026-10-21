@@ -5,6 +5,9 @@
 #include "api.h"
 #include "http.h"
 #include "solvejob.h"
+#include "subs.h"
+#include "text.h"
+#include <time.h>
 
 #define TAG_API 1
 
@@ -16,7 +19,7 @@
 
 const char *api_dump_dir;
 
-enum { OP_LIST, OP_PLAY };
+enum { OP_LIST, OP_PLAY, OP_FEED };
 enum { V_NONE, V_ASKING, V_DONE };
 /* a play: the player client, then (if it gives nothing playable) the TV
    client: the player's ID, its JavaScript, the TV answer, the solve */
@@ -39,6 +42,14 @@ struct api_op {
   yt_play tv;                 /* the TV answer, waiting for its challenges */
   solvejob job;
   char version[32], lib[400], core[400];
+  /* subscriptions' feeds: the channels, the one being read, how many failed */
+  char **ids;
+  int nids, at, failed, netfail, fallback, max;
+  long seen;
+  yt_list feed;               /* gathered here; given to list at the end */
+  yt_subs *names;             /* the channels' names brought up to date, or NULL */
+  api_feed_result *feed_result;
+  void (*feed_progress) (int done, int total, void *ctx);
   char job_path[400], out_path[400], player_path[400];
 };
 
@@ -75,6 +86,10 @@ static void free_op (api_op *op)
       remove (op->out_path);
     }
   yt_play_free (&op->tv);
+  for (int i = 0; i < op->nids; i++)
+    free (op->ids[i]);
+  free (op->ids);
+  yt_list_free (&op->feed);
   free (op->first_err);
   free (op->arg);
   free (op);
@@ -468,11 +483,172 @@ static void list_done (http_req *r, void *ctx)
   free_op (op);
 }
 
+/* ---- subscriptions' feeds ---------------------------------------------------- */
+
+static void feed_done (http_req *r, void *ctx);
+
+/* The videos are gathered in op->feed (op's own), and given to the page's
+   list only at the end, sorted: a page never shows a part-read, unsorted
+   list, and one left before the end is empty (so it's read again). */
+static void feed_finish (api_op *op)
+{
+  yt_list *to = op->list;
+  subs_sort_newest (&op->feed, op->max);
+  if (op->nids && op->failed == op->nids)
+    {
+      op->list_cb (-1, op->netfail ? "YouTube couldn't be reached: is the network up?"
+                   : "None of the channels could be read", op->ctx);
+      free_op (op);
+      return;
+    }
+  /* (the page's list is empty: fetch() starts from nothing) */
+  yt_list_free (to);
+  *to = op->feed;
+  memset (&op->feed, 0, sizeof op->feed);
+  if (op->feed_result)
+    {
+      op->feed_result->failed = op->failed;
+      op->feed_result->newest = 0;
+      for (int i = 0; i < to->n; i++)
+        if (to->items[i].published > op->feed_result->newest)
+          op->feed_result->newest = to->items[i].published;
+    }
+  op->list_cb (to->n, NULL, op->ctx);
+  free_op (op);
+}
+
+/* The next channel's feed (or, after it failed, its page): 0 sent; 1 all
+   read (the callback called, op freed); -1 out of memory. */
+static int feed_step (api_op *op)
+{
+  char path[200];
+  /* the network's down: don't go through every channel twice to say so */
+  if (op->at >= op->nids || (op->netfail >= 3 && op->netfail == op->failed && op->at == op->failed))
+    {
+      if (op->at < op->nids)
+        op->failed = op->nids;
+      feed_finish (op);
+      return 1;
+    }
+  if (!op->fallback)
+    {
+      subs_feed_path (op->ids[op->at], path, sizeof path);
+      op->req = http_get (YT_PLAYER_HOST, path, yt_web_get_headers (), TAG_API, feed_done, op);
+    }
+  else
+    {
+      yt_req *q = yt_req_channel (op->ids[op->at]);
+      if (q)
+        op->req = http_post (q->host, q->path, q->headers, q->body, strlen (q->body), TAG_API, feed_done, op);
+      yt_req_free (q);
+    }
+  return op->req ? 0 : -1;
+}
+
+/* A channel's page (the fallback): its videos, with times from "3 days ago" */
+static void feed_from_page (api_op *op, const char *body, size_t len, long now)
+{
+  yt_list t, *to = &op->feed;
+  char err[200];
+  memset (&t, 0, sizeof t);
+  if (yt_parse_list (body, len, YT_LIST_CHANNEL, &t, err, sizeof err) < 0)
+    {
+      op->failed++;
+      yt_list_free (&t);
+      return;
+    }
+  for (int i = 0; i < t.n; i++)
+    {
+      yt_item *it = &t.items[i];
+      long ago = subs_ago_seconds (it->meta);
+      int dup = it->kind != YT_VIDEO;
+      for (int k = 0; k < to->n && !dup; k++)
+        dup = !strcmp (to->items[k].id, it->id);
+      if (dup)
+        continue;
+      if (to->n == to->cap)
+        {
+          int cap = to->cap ? to->cap * 2 : 32;
+          yt_item *v = realloc (to->items, (size_t) cap * sizeof *v);
+          if (!v)
+            break;
+          to->items = v;
+          to->cap = cap;
+        }
+      it->published = ago >= 0 ? now - ago : 0;
+      if (!it->channel_id[0])
+        snprintf (it->channel_id, sizeof it->channel_id, "%s", op->ids[op->at]);
+      if (op->seen && it->published > op->seen)
+        {
+          char *m = subs_mark_new (it->meta);
+          if (m)
+            {
+              free (it->meta);
+              it->meta = m;
+            }
+        }
+      to->items[to->n++] = *it;
+      memset (it, 0, sizeof *it);                 /* (moved) */
+    }
+  yt_list_free (&t);
+}
+
+static void feed_done (http_req *r, void *ctx)
+{
+  api_op *op = ctx;
+  size_t len;
+  const char *body = http_body (r, &len);
+  int status = http_status (r), before = op->feed.n;
+  char err[200], name[300];
+  long now = (long) time (NULL);
+  op->req = NULL;
+  dump (op->fallback ? "browse" : "feed", body, len);
+  if (!op->fallback)
+    {
+      if (status == 200 && subs_parse_feed (body, len, &op->feed, now, op->seen, err, sizeof err, name, sizeof name) >= 0)
+        {
+          /* the channel's name as YouTube has it now (UTF-8) */
+          if (op->names && name[0])
+            subs_add (op->names, op->ids[op->at], name, NULL);
+          for (int i = before; i < op->feed.n; i++)
+            if (!op->feed.items[i].channel_id[0])
+              snprintf (op->feed.items[i].channel_id, sizeof op->feed.items[i].channel_id, "%s", op->ids[op->at]);
+          op->at++;
+        }
+      else if (!status)
+        {
+          op->failed++;                          /* (not reached at all: no page either) */
+          op->netfail++;
+          op->at++;
+        }
+      else
+        op->fallback = 1;                        /* its page instead */
+    }
+  else
+    {
+      if (status == 200)
+        feed_from_page (op, body, len, now);
+      else
+        op->failed++;
+      op->fallback = 0;
+      op->at++;
+    }
+  if (op->feed_progress && !op->fallback)
+    op->feed_progress (op->at, op->nids, op->ctx);
+  if (feed_step (op) < 0)
+    {
+      op->list_cb (-1, "Out of memory", op->ctx);
+      free_op (op);
+    }
+}
+
 /* Sends op's first request: 0; -1 if it couldn't be made (out of memory);
    1 if op is finished already (its callback called, and freed). */
 static int send_op (api_op *op)
 {
   yt_req *q;
+  if (op->type == OP_FEED)
+    return feed_step (op);
   if (op->type == OP_PLAY)
     {
       if (!strcmp (yt_config_get ("stream_client"), "tv") && tv_allowed ())
@@ -580,6 +756,37 @@ api_op *api_list (int kind, const char *arg, int more, int date, yt_list *list, 
   op->list = list;
   op->list_cb = cb;
   op->ctx = ctx;
+  return start (op);
+}
+
+api_op *api_feed (const char *const *ids, int n, long seen, int max, yt_list *list, api_list_cb cb,
+                  void (*progress) (int done, int total, void *ctx), void *ctx,
+                  yt_subs *names, api_feed_result *result)
+{
+  api_op *op = calloc (1, sizeof *op);
+  if (!op || !(op->arg = strdup ("feed")) || (n && !(op->ids = calloc ((size_t) n, sizeof *op->ids))))
+    {
+      if (op)
+        free (op->arg);
+      free (op);
+      return NULL;
+    }
+  for (int i = 0; i < n; i++)
+    if (!(op->ids[op->nids++] = strdup (ids[i])))
+      {
+        free_op (op);
+        return NULL;
+      }
+  op->type = OP_FEED;
+  op->kind = YT_LIST_CHANNEL;
+  op->seen = seen;
+  op->max = max;
+  op->list = list;
+  op->list_cb = cb;
+  op->feed_progress = progress;
+  op->ctx = ctx;
+  op->names = names;
+  op->feed_result = result;
   return start (op);
 }
 

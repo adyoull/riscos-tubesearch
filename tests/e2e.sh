@@ -141,6 +141,18 @@ import json
 bad=[r for r in (json.loads(l) for l in open('$W/log')) if r.get('problems')]
 assert not bad, bad\""
 
+# ---- subscriptions: the channels' feeds (a gone one: its page) ----
+"$CLI" feed UCaaaaaaaaaaaaaaaaaaaaaa UCbbbbbbbbbbbbbbbbbbbbbb UCcccccccccccccccccccccc > "$W/feed" 2> "$W/err" || { cat "$W/err"; fail=1; }
+check "feed: the feeds' videos, newest first, and the gone channel's page" "[ \$(grep -c '^[A-Za-z0-9_-]\{11\} ' '$W/feed') -eq 35 ] && head -1 '$W/feed' | grep -q 'Live: runway 23R\|^[A-Za-z0-9_-]\{11\} ' && python3 -I -c \"
+import json
+rows=[json.loads(l) for l in open('$W/log')]
+feeds=[r for r in rows if r.get('path','').startswith('/feeds/videos.xml?channel_id=')]
+assert len(feeds)==3, feeds
+assert any(r.get('endpoint')=='browse' for r in rows)
+\""
+"$CLI" import "$HERE/subs/newpipe_subscriptions.json" > "$W/import" 2> "$W/err" || { cat "$W/err"; fail=1; }
+check "import: NewPipe's list" "grep -q '^UCaaaaaaaaaaaaaaaaaaaaaa  Joueur du Grenier' '$W/import' && grep -q '2 channels' '$W/err'"
+
 # ---- the upload-date filter ----
 "$CLI" -date week search test > "$W/week" 2> "$W/err" || { cat "$W/err"; fail=1; }
 check "-date week: YouTube's This week filter sent" "python3 -I -c \"

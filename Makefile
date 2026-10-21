@@ -14,7 +14,7 @@ RCD_DIR ?= ../riscos-crossdev
 include $(RCD_DIR)/riscos.mk
 .DEFAULT_GOAL := all
 
-VERSION := 0.2.0-rc10
+VERSION := 0.2.0-rc11
 DATE := 21 Oct 2026
 VERDEFS := -DTUBE_VERSION='"$(VERSION)"' -DTUBE_DATE='"$(DATE)"'
 OUT := out

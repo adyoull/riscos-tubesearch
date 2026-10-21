@@ -139,6 +139,14 @@ int yt_territory_locale (int territory, const char **language, const char **regi
 int yt_use_territory (int territory);
 /* "en" -> "English" (or the code itself). */
 const char *yt_lang_name (const char *code);
+/* The languages the Sound menus offer, in the order of their English
+   names: the i'th one's code ("ar", "bn"... "vi"), or NULL past the end. */
+const char *yt_lang_menu (int i);
+/* Is code one of Config's languages? */
+int yt_lang_understood (const char *code);
+/* Adds code to Config's languages, or takes it off if it's there.
+   0, or -1 out of memory. */
+int yt_lang_toggle (const char *code);
 
 typedef struct {
   char *title;              /* UTF-8 */

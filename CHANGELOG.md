@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0-rc11 (2026-10-21): the languages on the Sound menu
+
+- Sound has two more entries: Language, a list of 30 languages to play
+  that one's track (else the original), and I also understand, the same
+  list to tick the others you understand (Adjust ticks several). Both are
+  saved in Choices:TubeSearch.Choices. In rc10 these were Config only.
+
 ## 0.2.0-rc10 (2026-10-21): languages
 
 - The language and country YouTube is told come from RISC OS's territory

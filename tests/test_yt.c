@@ -185,6 +185,14 @@ static void test_languages (void)
   }
   yt_config_set ("languages", "de");                                       /* English not understood */
   CHECK (yt_audio_score (&dub_fr) > yt_audio_score (&orig_en));
+  /* the menus' list, and ticking languages on and off */
+  CHECK (!strcmp (yt_lang_menu (0), "ar") && yt_lang_menu (29) && !yt_lang_menu (30) && !yt_lang_menu (-1));
+  for (int i = 0; yt_lang_menu (i); i++)
+    CHECK (strcmp (yt_lang_name (yt_lang_menu (i)), yt_lang_menu (i)) && strlen (yt_lang_name (yt_lang_menu (i))) <= 12);
+  yt_config_set ("languages", "en, de");
+  CHECK (yt_lang_toggle ("fr") == 0 && !strcmp (yt_config_get ("languages"), "en de fr") && yt_lang_understood ("fr-FR"));
+  CHECK (yt_lang_toggle ("de-DE") == 0 && !strcmp (yt_config_get ("languages"), "en fr") && !yt_lang_understood ("de"));
+  CHECK (yt_lang_toggle ("en") == 0 && yt_lang_toggle ("fr") == 0 && !strcmp (yt_config_get ("languages"), ""));
   yt_config_set ("languages", "");
   yt_config_set ("language", "en-GB");
   yt_config_set ("region", "GB");

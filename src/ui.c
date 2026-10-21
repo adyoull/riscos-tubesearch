@@ -1187,9 +1187,9 @@ static void play (const yt_item *it)
 /* ---- menus -------------------------------------------------------------- */
 
 typedef struct { int flags, submenu, icon_flags; int data[3]; } menu_item;
-typedef struct { char title[12]; unsigned char colours[4]; int width, height, gap; menu_item item[10]; } menu_block;
+typedef struct { char title[12]; unsigned char colours[4]; int width, height, gap; menu_item item[32]; } menu_block;
 
-static menu_block quality_menu, bar_menu, tile_menu, date_menu, sound_menu, fps_menu;
+static menu_block quality_menu, bar_menu, tile_menu, date_menu, sound_menu, fps_menu, lang_menu, understood_menu;
 
 static void data_load (int *b);
 static void menu_init (menu_block *m, const char *title, int width);
@@ -1221,8 +1221,9 @@ static void save_choices (void)
   if (!path[0] || !(f = fopen (path, "w")))
     return;
   fprintf (f, "# TubeSearch's menu choices, saved as you make them (read after Config)\n"
-           "max_quality = %d\nmax_fps = %s\naudio_language = %s\nsearch_date = %s\n",
-           quality, yt_config_get ("max_fps"), yt_config_get ("audio_language"), yt_date_word (search_date));
+           "max_quality = %d\nmax_fps = %s\naudio_language = %s\nlanguages = %s\nsearch_date = %s\n",
+           quality, yt_config_get ("max_fps"), yt_config_get ("audio_language"), yt_config_get ("languages"),
+           yt_date_word (search_date));
   fclose (f);
 }
 
@@ -1299,26 +1300,46 @@ static void build_quality_menu (void)
     menu_add (&quality_menu, i, names[i], 0, (q[i] == quality ? 1 : 0) | (i == 3 ? 0x80 : 0));
 }
 
-/* Sound: the track in my language (Config's language), or the original */
+/* Sound: the track in my language (Config's language), the original, or
+   a language chosen; and the other languages I understand (ticked) */
 static void build_sound_menu (void)
 {
   const char *a = yt_config_get ("audio_language");
-  static char mine[64];
+  static char mine[64], understand[] = "I also understand";
   char code[16];
+  int named = strcmp (a, "mine") && strcmp (a, "original"), n;
   yt_lang_primary (yt_config_get ("language"), code, sizeof code);
   snprintf (mine, sizeof mine, "My language (%s)", yt_lang_name (code));
-  menu_init (&sound_menu, "Sound", strlen (mine) * 16 + 48 > 300 ? (int) strlen (mine) * 16 + 48 : 300);
+  n = (int) (strlen (mine) > sizeof understand - 1 ? strlen (mine) : sizeof understand - 1);
+  menu_init (&sound_menu, "Sound", n * 16 + 48);
   menu_add_ind (&sound_menu, 0, mine, sizeof mine, !strcmp (a, "mine") ? 1 : 0);
-  menu_add (&sound_menu, 1, "Original", 0, (!strcmp (a, "original") ? 1 : 0) | 0x80);
+  menu_add (&sound_menu, 1, "Original", 0, (!strcmp (a, "original") ? 1 : 0) | 2 /* dotted line */);
+  menu_add (&sound_menu, 2, "Language", (int) &lang_menu, named ? 1 : 0);
+  menu_add_ind (&sound_menu, 3, understand, sizeof understand, 0x80);
+  sound_menu.item[3].submenu = (int) &understood_menu;
+  yt_lang_primary (a, code, sizeof code);
+  menu_init (&lang_menu, "Language", 240);
+  menu_init (&understood_menu, "Understood", 240);
+  for (int i = 0; yt_lang_menu (i); i++)
+    {
+      int last = !yt_lang_menu (i + 1) ? 0x80 : 0;
+      menu_add (&lang_menu, i, yt_lang_name (yt_lang_menu (i)), 0, (named && !strcmp (code, yt_lang_menu (i)) ? 1 : 0) | last);
+      menu_add (&understood_menu, i, yt_lang_name (yt_lang_menu (i)), 0, (yt_lang_understood (yt_lang_menu (i)) ? 1 : 0) | last);
+    }
 }
 
-static void choose_sound (int i)
+/* s: the selection from the Sound menu on (its item, then the submenu's) */
+static void choose_sound (const int *s)
 {
-  if (i == 0 || i == 1)
-    {
-      yt_config_set ("audio_language", i == 0 ? "mine" : "original");
-      save_choices ();
-    }
+  if (s[0] == 0 || s[0] == 1)
+    yt_config_set ("audio_language", s[0] == 0 ? "mine" : "original");
+  else if (s[0] == 2 && yt_lang_menu (s[1]))
+    yt_config_set ("audio_language", yt_lang_menu (s[1]));
+  else if (s[0] == 3 && yt_lang_menu (s[1]))
+    yt_lang_toggle (yt_lang_menu (s[1]));
+  else
+    return;
+  save_choices ();
 }
 
 static void build_date_menu (void)
@@ -1520,7 +1541,7 @@ static int menu_selection (const int *sel)
       else if (sel[0] == 5 && sel[1] >= 0)
         choose_fps (sel[1]);
       else if (sel[0] == 6 && sel[1] >= 0)
-        choose_sound (sel[1]);
+        choose_sound (sel + 1);
       else if (sel[0] == 7)
         return 1;
       if (adjust)
@@ -1559,7 +1580,7 @@ static int menu_selection (const int *sel)
       else if (i == q + 1 && sel[1] >= 0)
         choose_fps (sel[1]);
       else if (i == q + 2 && sel[1] >= 0)
-        choose_sound (sel[1]);
+        choose_sound (sel + 1);
       if (adjust && i >= q && i <= q + 2)
         {
           build_quality_menu ();

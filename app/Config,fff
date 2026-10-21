@@ -29,11 +29,12 @@ stream_format = hls
 #   mine      the track in your language (the language setting below),
 #             else the original
 #   original  always what the video was made with
-#   de, fr... that language, else the original
+#   de, fr... that language, else the original (Sound > Language)
 audio_language = mine
 
 # Other languages you understand, as codes (en de it): a video made in
-# one of them plays as it was made rather than dubbed into yours.
+# one of them plays as it was made rather than dubbed into yours
+# (Sound > I also understand).
 # languages = en
 
 # The upload-date filter searches start with (the menu beside Search

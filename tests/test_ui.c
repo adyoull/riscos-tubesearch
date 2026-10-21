@@ -720,10 +720,10 @@ int main (int argc, char **argv)
         fclose (f);
       }
     CHECK (strstr (text, "max_quality = 720\n") && strstr (text, "max_fps = 60\n") && strstr (text, "audio_language = mine\n")
-           && strstr (text, "search_date = any\n"), "the choices file");
+           && strstr (text, "languages = \n") && strstr (text, "search_date = any\n"), "the choices file");
     yt_config_set ("max_quality", "1080");
     yt_config_set ("max_fps", "30");
-    CHECK (yt_config_load (path) == 4 && !strcmp (yt_config_get ("max_quality"), "720")
+    CHECK (yt_config_load (path) == 5 && !strcmp (yt_config_get ("max_quality"), "720")
            && !strcmp (yt_config_get ("max_fps"), "60"), "read back at the next start");
     click_tile (3, 100, 100, 2);
     sel[1] = 0;                                  /* Frame rate > 30 a second */
@@ -950,6 +950,54 @@ int main (int argc, char **argv)
       ui_event (9, sel);
     }
     CHECK (!strcmp (yt_config_get ("audio_language"), "original"), "Sound > Original chosen");
+    {
+      /* Sound > Language > French; Sound > I also understand > English (and off again) */
+      const int *m, *sm, *lm, *um;
+      int fr = -1, en = -1;
+      for (int i = 0; yt_lang_menu (i); i++)
+        {
+          if (!strcmp (yt_lang_menu (i), "fr"))
+            fr = i;
+          if (!strcmp (yt_lang_menu (i), "en"))
+            en = i;
+        }
+      click_tile (1, 100, 100, 2);
+      m = (const int *) last_menu;
+      sm = m ? (const int *) m[7 + 8 * 6 + 1] : NULL;
+      CHECK (sm && !strcmp ((const char *) &sm[7 + 2 * 6 + 3], "Language") && (sm[7 + 1 * 6] & 2)
+             && (sm[7 + 3 * 6] & 0x80) && !strcmp ((const char *) sm[7 + 3 * 6 + 3], "I also understand"),
+             "Sound: My language, Original, Language, I also understand");
+      lm = sm ? (const int *) sm[7 + 2 * 6 + 1] : NULL;
+      um = sm ? (const int *) sm[7 + 3 * 6 + 1] : NULL;
+      CHECK (lm && um && fr >= 0 && !strncmp ((const char *) &lm[7 + fr * 6 + 3], "French", 6)
+             && !(lm[7 + fr * 6] & 1) && !(um[7 + en * 6] & 1), "the languages, none ticked");
+      {
+        int sel[4] = { 8, 2, fr, -1 };
+        ui_event (9, sel);
+      }
+      CHECK (!strcmp (yt_config_get ("audio_language"), "fr"), "Sound > Language > French");
+      click_tile (1, 100, 100, 2);
+      m = (const int *) last_menu;
+      sm = (const int *) m[7 + 8 * 6 + 1];
+      lm = (const int *) sm[7 + 2 * 6 + 1];
+      CHECK ((sm[7 + 2 * 6] & 1) && (lm[7 + fr * 6] & 1) && !(sm[7] & 1), "French ticked (and Language)");
+      {
+        int sel[4] = { 8, 3, en, -1 };
+        ui_event (9, sel);
+      }
+      CHECK (!strcmp (yt_config_get ("languages"), "en"), "I also understand > English");
+      click_tile (1, 100, 100, 2);
+      m = (const int *) last_menu;
+      sm = (const int *) m[7 + 8 * 6 + 1];
+      um = (const int *) sm[7 + 3 * 6 + 1];
+      CHECK (um[7 + en * 6] & 1, "English ticked");
+      {
+        int sel[4] = { 8, 3, en, -1 };
+        ui_event (9, sel);
+      }
+      CHECK (!strcmp (yt_config_get ("languages"), ""), "and off again");
+      yt_config_set ("audio_language", "original");
+    }
     {
       const int *m = (const int *) last_menu, *sm = m ? (const int *) m[7 + 8 * 6 + 1] : NULL;
       CHECK (sm && (sm[7 + 2] & 0x100) && !strcmp ((const char *) sm[7 + 3], "My language (German)"),

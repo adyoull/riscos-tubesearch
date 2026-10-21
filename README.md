@@ -8,6 +8,10 @@ own API (Innertube) over HTTPS through the AcornSSL module.
 
 Not made by or connected with YouTube or Google.
 
+![A channel's videos in TubeSearch, one playing in Reel](docs/screenshots/channel.jpg)
+
+![My channels: the channels subscribed to](docs/screenshots/my-channels.jpg)
+
 ## Download
 
 From [Releases](https://github.com/adyoull/riscos-tubesearch/releases):
@@ -29,7 +33,7 @@ type a search and press Return.
 | Back | the page before |
 | Subscriptions | the newest videos of the channels you follow (Adjust: the channels) |
 | Refresh (or F5) | the page on screen fetched again (a live stream that has started, new videos) |
-| Menu | Play, Related, Channel, Subscribe, Back, Refresh, Quality (360p–1080p), Frame rate (30/60), Sound (my language / original) |
+| Menu | Play, Related, Channel, Subscribe, Back, Refresh, Quality (360p–1080p), Frame rate (30/60), Sound (my language / original / a language; languages you also understand) |
 | a pasted YouTube address | plays it, and shows what's related |
 | Menu on the icon bar icon | Info, Search, Subscriptions, My channels, Quality, Frame rate, Sound, Quit |
 | Uploaded (beside Search) | Any time, Today, This week, This month, This year |
@@ -44,9 +48,9 @@ that fails.
 territory (France: `fr`, `FR`), unless Config's `language` and `region` say
 otherwise. Titles are shown in the desktop's alphabet (Latin-1 to Latin-10,
 Greek, Cyrillic, Hebrew, Arabic, Welsh or UTF-8), and search words are sent
-as UTF-8. Sound > My language plays the dub in your language; Config's
-`languages` (`en de`) lists others you understand, whose originals play
-undubbed.
+as UTF-8. Sound > My language plays the dub in your language, Sound > Language
+another's; Sound > I also understand (Config's `languages`, `en de`) ticks
+others you understand, whose originals play undubbed.
 
 The menus' choices are saved in `Choices:TubeSearch.Choices` and kept for
 the next run.

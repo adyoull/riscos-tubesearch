@@ -97,11 +97,12 @@ YouTube as they should.
 Many videos now have dubbed sound tracks besides the original (YouTube
 adds some itself). Sound on the menus chooses: My language plays the
 track in your language if the video has one, and the original
-otherwise; Original always plays what the video was made with. The
+otherwise; Original always plays what the video was made with;
+Language picks another language's track (else the original). The
 status line says which it is. If you understand other languages too,
-list them in Config's languages setting (languages = en de): a video
+tick them in Sound > I also understand (Adjust ticks several): a video
 made in one of them is then played as it was made, not dubbed into
-yours.
+yours. (Config's languages setting is the same list: languages = en de.)
 
 Videos are played as HLS: YouTube's playlists of short pieces, each
 fetched on its own. YouTube can slow down, or refuse part way, the two

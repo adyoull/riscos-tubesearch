@@ -1122,6 +1122,64 @@ static int understood (const char *lang)
   return 0;
 }
 
+int yt_lang_understood (const char *code)
+{
+  char c[16];
+  yt_lang_primary (code, c, sizeof c);
+  return understood (c);
+}
+
+int yt_lang_toggle (const char *code)
+{
+  const char *p = CFG ("languages");
+  char c[16], *out = malloc (strlen (p) + 20);
+  int had = 0, r;
+  if (!out)
+    return -1;
+  yt_lang_primary (code, c, sizeof c);
+  out[0] = 0;
+  while (*p)
+    {
+      size_t n = 0;
+      char word[32], one[16];
+      while (*p == ' ' || *p == ',' || *p == '\t')
+        p++;
+      while (p[n] && p[n] != ' ' && p[n] != ',' && p[n] != '\t')
+        n++;
+      if (!n)
+        break;
+      snprintf (word, sizeof word, "%.*s", (int) (n < 31 ? n : 31), p);
+      p += n;
+      yt_lang_primary (word, one, sizeof one);
+      if (!strcmp (one, c))
+        {
+          had = 1;                                   /* (taken off) */
+          continue;
+        }
+      if (out[0])
+        strcat (out, " ");
+      strcat (out, word);
+    }
+  if (!had && c[0])
+    {
+      if (out[0])
+        strcat (out, " ");
+      strcat (out, c);
+    }
+  r = yt_config_set ("languages", out);
+  free (out);
+  return r;
+}
+
+const char *yt_lang_menu (int i)
+{
+  static const char *const codes[] = {
+    "ar", "bn", "zh", "cs", "da", "nl", "en", "fi", "fr", "de", "el", "he", "hi", "hu", "id",
+    "it", "ja", "ko", "no", "pl", "pt", "ro", "ru", "es", "sv", "ta", "th", "tr", "uk", "vi",
+  };
+  return i >= 0 && i < (int) (sizeof codes / sizeof codes[0]) ? codes[i] : NULL;
+}
+
 int yt_audio_score (const yt_audio *a)
 {
   const char *want = CFG ("audio_language");

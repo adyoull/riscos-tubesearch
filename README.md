@@ -155,6 +155,24 @@ The tests use real YouTube answers recorded by NewPipe's test suite
 
 Tested by hand on a Raspberry Pi 4 (RISC OS 5, Reel 0.1.27+).
 
+### On GitHub, and with Docker
+
+Every push and pull request is built and tested on GitHub
+(`.github/workflows/riscos-build.yml`) in riscos-crossdev's container image,
+the release named in `.riscos-deps`; the zip is kept on the run's page. The
+same build on any machine with Docker:
+
+```sh
+docker run --rm -v "$PWD":/src ghcr.io/adyoull/riscos-crossdev:1.8.2 make check all
+```
+
+Once a day `riscos-deps-update.yml` looks for a newer riscos-crossdev
+release; when there is one it builds and tests with it and opens a pull
+request saying whether that passed. Nothing is merged or released by
+itself: merge, try it on a Pi, then release. Release candidates are
+GitHub pre-releases. (riscos-crossdev's `docs/CI.md` explains the chain.)
+`update-ejs.yml` keeps `ejs.json` at the solver version yt-dlp pins.
+
 ## Licence and support
 
 MIT (`COPYING`). Bundled: QuickJS (MIT, `third_party/quickjs`, with a

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Built and tested on GitHub for every push and pull request, in
+  riscos-crossdev 1.8.2's container image (.riscos-deps), with a pull
+  request when riscos-crossdev makes a new release (riscos-crossdev's CI
+  chain: riscos-build.yml, riscos-deps-update.yml).
+
 ## 0.2.0-rc12 (2026-10-22): my language, without a territory
 
 - RISC OS 5 has territory modules for only a few countries (none for

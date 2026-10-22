@@ -227,9 +227,12 @@ int main (int argc, char **argv)
   signal (SIGPIPE, SIG_IGN);           /* a connection closed under us is an error, not the end */
 #else
   {
-    int territory, alphabet;           /* the language and country, and the alphabet, as TubeSearch's */
-    if (!_swix (Territory_Number, _OUT (0), &territory))
-      yt_use_territory (territory);
+    int territory = 1, keyboard = 0, alphabet;   /* the language and country, and the alphabet, as TubeSearch's */
+    if (_swix (Territory_Number, _OUT (0), &territory))
+      territory = 1;
+    if (_swix (OS_Byte, _INR (0, 1) | _OUT (1), 71, 255, &keyboard))
+      keyboard = 0;
+    yt_use_locale (territory, keyboard);
     if (!_swix (OS_Byte, _INR (0, 1) | _OUT (1), 71, 127, &alphabet))
       text_set_alphabet (alphabet);
   }

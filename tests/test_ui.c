@@ -207,7 +207,7 @@ static const _kernel_oserror *os (int swi, int r[10])
     case OS_ReadModeVariable:
       r[2] = r[1] == 4 || r[1] == 5 ? 1 : r[1] == 11 ? 1919 : r[1] == 12 ? 1079 : 0;
       return NULL;
-    case OS_Byte: r[1] = 101; return NULL;           /* Latin-1 */
+    case OS_Byte: r[1] = r[1] == 255 ? 1 : 101; return NULL;   /* a UK keyboard; Latin-1 */
     case Territory_Number: r[0] = 6; return NULL;    /* France */
     case OS_Plot: return NULL;
     case ColourTrans_SetGCOL: return NULL;
@@ -723,7 +723,7 @@ int main (int argc, char **argv)
            && strstr (text, "languages = \n") && strstr (text, "search_date = any\n"), "the choices file");
     yt_config_set ("max_quality", "1080");
     yt_config_set ("max_fps", "30");
-    CHECK (yt_config_load (path) == 5 && !strcmp (yt_config_get ("max_quality"), "720")
+    CHECK (yt_config_load (path) == 6 && !strcmp (yt_config_get ("max_quality"), "720")
            && !strcmp (yt_config_get ("max_fps"), "60"), "read back at the next start");
     click_tile (3, 100, 100, 2);
     sel[1] = 0;                                  /* Frame rate > 30 a second */
@@ -996,8 +996,46 @@ int main (int argc, char **argv)
         ui_event (9, sel);
       }
       CHECK (!strcmp (yt_config_get ("languages"), ""), "and off again");
+      /* Sound > My language > French: the language and country YouTube is told; then Automatic */
+      click_tile (1, 100, 100, 2);
+      m = (const int *) last_menu;
+      sm = (const int *) m[7 + 8 * 6 + 1];
+      {
+        const int *mm = (const int *) sm[7 + 1];
+        CHECK (mm && !strcmp ((const char *) &mm[7 + 3], "Automatic") && (mm[7] & 1) && (mm[7] & 2)
+               && !strncmp ((const char *) &mm[7 + (fr + 1) * 6 + 3], "French", 6), "My language: Automatic (ticked), then the languages");
+        int sel[4] = { 8, 0, fr + 1, -1 };
+        ui_event (9, sel);
+      }
+      CHECK (!strcmp (yt_config_get ("language"), "fr") && !strcmp (yt_config_get ("region"), "FR")
+             && !strcmp (yt_config_get ("audio_language"), "mine") && !strcmp (yt_config_get ("my_language"), "fr"),
+             "My language > French");
+      {
+        char path[600], text[600] = "";
+        FILE *f;
+        snprintf (path, sizeof path, "%s.TubeSearch.Choices", getenv ("Choices$Write"));
+        if ((f = fopen (path, "r")))
+          {
+            text[fread (text, 1, sizeof text - 1, f)] = 0;
+            fclose (f);
+          }
+        CHECK (strstr (text, "my_language = fr\n") != NULL, "kept in Choices");
+      }
+      click_tile (1, 100, 100, 2);
+      m = (const int *) last_menu;
+      sm = (const int *) m[7 + 8 * 6 + 1];
+      CHECK (!strcmp ((const char *) sm[7 + 3], "My language (French)"), "and named");
+      {
+        int sel[4] = { 8, 0, 0, -1 };             /* Automatic */
+        ui_event (9, sel);
+      }
+      CHECK (!strcmp (yt_config_get ("language"), "fr") && !strcmp (yt_config_get ("region"), "FR")
+             && !strcmp (yt_config_get ("my_language"), ""), "Automatic: back to what the start found (France)");
+      yt_config_set ("language", "de-DE");         /* (as this part had it) */
+      yt_config_set ("region", "GB");
       yt_config_set ("audio_language", "original");
     }
+    click_tile (1, 100, 100, 2);
     {
       const int *m = (const int *) last_menu, *sm = m ? (const int *) m[7 + 8 * 6 + 1] : NULL;
       CHECK (sm && (sm[7 + 2] & 0x100) && !strcmp ((const char *) sm[7 + 3], "My language (German)"),

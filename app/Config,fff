@@ -81,7 +81,8 @@ search_date = any
 # media_user_agent = Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15
 
 # Language and country for results (and My language, above). They come
-# from the territory (France: fr and FR; the UK: en-GB and GB); set them
-# here for others:
+# from the territory (Germany: de and DE; the UK: en-GB and GB), or on the
+# UK territory from the keyboard (French: fr and FR); Sound > My language
+# on the menus chooses over both. Or set them here:
 # language = en-GB
 # region = GB

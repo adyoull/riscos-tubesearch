@@ -45,8 +45,9 @@ from each channel's feed (`/feeds/videos.xml?channel_id=`), or its page if
 that fails.
 
 **Language**: YouTube's language and country come from the RISC OS
-territory (France: `fr`, `FR`), unless Config's `language` and `region` say
-otherwise. Titles are shown in the desktop's alphabet (Latin-1 to Latin-10,
+territory (Germany: `de`, `DE`), or, on the UK territory, from the keyboard
+(French: `fr`, `FR`; RISC OS 5 has no France territory module). Sound > My
+language chooses one; Config's `language` and `region` also set them. Titles are shown in the desktop's alphabet (Latin-1 to Latin-10,
 Greek, Cyrillic, Hebrew, Arabic, Welsh or UTF-8), and search words are sent
 as UTF-8. Sound > My language plays the dub in your language, Sound > Language
 another's; Sound > I also understand (Config's `languages`, `en de`) ticks

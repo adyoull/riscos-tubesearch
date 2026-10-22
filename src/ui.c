@@ -1189,7 +1189,25 @@ static void play (const yt_item *it)
 typedef struct { int flags, submenu, icon_flags; int data[3]; } menu_item;
 typedef struct { char title[12]; unsigned char colours[4]; int width, height, gap; menu_item item[32]; } menu_block;
 
-static menu_block quality_menu, bar_menu, tile_menu, date_menu, sound_menu, fps_menu, lang_menu, understood_menu;
+static menu_block quality_menu, bar_menu, tile_menu, date_menu, sound_menu, fps_menu, lang_menu, understood_menu,
+  mine_menu;
+static char auto_language[32] = "en-GB", auto_region[8] = "GB";   /* from the territory, keyboard and Config */
+
+/* Sound > My language's choice (Choices' my_language), over the automatic one */
+static void use_my_language (void)
+{
+  const char *l, *r;
+  if (!yt_lang_locale (yt_config_get ("my_language"), &l, &r))
+    {
+      yt_config_set ("language", l);
+      yt_config_set ("region", r);
+    }
+  else
+    {
+      yt_config_set ("language", auto_language);
+      yt_config_set ("region", auto_region);
+    }
+}
 
 static void data_load (int *b);
 static void menu_init (menu_block *m, const char *title, int width);
@@ -1221,9 +1239,9 @@ static void save_choices (void)
   if (!path[0] || !(f = fopen (path, "w")))
     return;
   fprintf (f, "# TubeSearch's menu choices, saved as you make them (read after Config)\n"
-           "max_quality = %d\nmax_fps = %s\naudio_language = %s\nlanguages = %s\nsearch_date = %s\n",
-           quality, yt_config_get ("max_fps"), yt_config_get ("audio_language"), yt_config_get ("languages"),
-           yt_date_word (search_date));
+           "max_quality = %d\nmax_fps = %s\naudio_language = %s\nmy_language = %s\nlanguages = %s\nsearch_date = %s\n",
+           quality, yt_config_get ("max_fps"), yt_config_get ("audio_language"), yt_config_get ("my_language"),
+           yt_config_get ("languages"), yt_date_word (search_date));
   fclose (f);
 }
 
@@ -1313,6 +1331,20 @@ static void build_sound_menu (void)
   n = (int) (strlen (mine) > sizeof understand - 1 ? strlen (mine) : sizeof understand - 1);
   menu_init (&sound_menu, "Sound", n * 16 + 48);
   menu_add_ind (&sound_menu, 0, mine, sizeof mine, !strcmp (a, "mine") ? 1 : 0);
+  sound_menu.item[0].submenu = (int) &mine_menu;
+  {
+    /* My language's own: Automatic (the territory's, or the keyboard's), or one chosen */
+    const char *chosen = yt_config_get ("my_language");
+    int known = 0;
+    menu_init (&mine_menu, "My language", 240);
+    for (int i = 0; yt_lang_menu (i); i++)
+      {
+        int on = !strcmp (chosen, yt_lang_menu (i));
+        known |= on;
+        menu_add (&mine_menu, i + 1, yt_lang_name (yt_lang_menu (i)), 0, (on ? 1 : 0) | (!yt_lang_menu (i + 1) ? 0x80 : 0));
+      }
+    menu_add (&mine_menu, 0, "Automatic", 0, (known ? 0 : 1) | 2 /* dotted line */);
+  }
   menu_add (&sound_menu, 1, "Original", 0, (!strcmp (a, "original") ? 1 : 0) | 2 /* dotted line */);
   menu_add (&sound_menu, 2, "Language", (int) &lang_menu, named ? 1 : 0);
   menu_add_ind (&sound_menu, 3, understand, sizeof understand, 0x80);
@@ -1331,7 +1363,14 @@ static void build_sound_menu (void)
 /* s: the selection from the Sound menu on (its item, then the submenu's) */
 static void choose_sound (const int *s)
 {
-  if (s[0] == 0 || s[0] == 1)
+  if (s[0] == 0 && s[1] >= 0)
+    {
+      /* My language > Automatic, or a language */
+      yt_config_set ("my_language", s[1] >= 1 && yt_lang_menu (s[1] - 1) ? yt_lang_menu (s[1] - 1) : "");
+      use_my_language ();
+      yt_config_set ("audio_language", "mine");
+    }
+  else if (s[0] == 0 || s[0] == 1)
     yt_config_set ("audio_language", s[0] == 0 ? "mine" : "original");
   else if (s[0] == 2 && yt_lang_menu (s[1]))
     yt_config_set ("audio_language", yt_lang_menu (s[1]));
@@ -1706,13 +1745,16 @@ int ui_init (void)
       ui_report (err);
       return 1;
     }
-  /* the settings: the language and country from the territory, then
-     !TubeSearch's own Config, then the user's in Choices */
+  /* the settings: the language and country from the territory (or the
+     keyboard), then !TubeSearch's own Config, then the user's in Choices */
   {
     char path[300];
-    int territory;
-    if (!_swix (Territory_Number, _OUT (0), &territory))
-      yt_use_territory (territory);
+    int territory = 1, keyboard = 0;
+    if (_swix (Territory_Number, _OUT (0), &territory))
+      territory = 1;
+    if (_swix (OS_Byte, _INR (0, 1) | _OUT (1), 71, 255, &keyboard))
+      keyboard = 0;
+    yt_use_locale (territory, keyboard);
     const char *choices = getenv ("Choices$Write");
     if (dir)
       {
@@ -1724,9 +1766,13 @@ int ui_init (void)
         snprintf (path, sizeof path, "%s.TubeSearch.Config", choices);
         yt_config_load (path);
       }
+    /* what Sound > My language > Automatic goes back to */
+    snprintf (auto_language, sizeof auto_language, "%s", yt_config_get ("language"));
+    snprintf (auto_region, sizeof auto_region, "%s", yt_config_get ("region"));
     choices_path (path, sizeof path);           /* the menus' choices, last */
     if (path[0])
       yt_config_load (path);
+    use_my_language ();
     if (choices)
       {
         snprintf (subs_path, sizeof subs_path, "%s.TubeSearch.Subscriptions", choices);

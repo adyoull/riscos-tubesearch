@@ -34,7 +34,8 @@ static setting settings[] = {
   { "max_fps", "30", NULL },                  /* the most frames a second: 30 or 60 */
   { "stream_format", "hls", NULL },           /* hls, dash (yt.h) */
   { "audio_language", "mine", NULL },         /* mine, original, or a language code (yt.h) */
-  { "languages", "", NULL },                  /* others you understand: "en de" (yt.h) */
+  { "languages", "", NULL },
+  { "my_language", "", NULL },                /* chosen on the Sound menu ("fr"): over the territory's */                  /* others you understand: "en de" (yt.h) */
   { "search_date", "any", NULL },             /* any, today, week, month, year */
   /* the fallback when the player client gives nothing playable: yt-dlp
      2026-10-10's default client, tv_samsung (needs the player's JavaScript) */
@@ -1217,6 +1218,7 @@ static const struct { short territory; const char *language, *region; } territor
   { 142, "hu", "HU" }, { 144, "lv", "LV" }, { 145, "lt", "LT" }, { 146, "mk", "MK" }, { 147, "en-GB", "MT" },
   { 148, "pl", "PL" }, { 149, "pa", "IN" }, { 150, "ro", "RO" }, { 151, "sr", "RS" }, { 152, "sk", "SK" },
   { 153, "sl", "SI" }, { 154, "ta", "IN" }, { 155, "uk", "UA" }, { 156, "fr", "CH" }, { 157, "de", "CH" },
+  { 70, "en-GB", "GB" }, { 71, "en", "US" },                            /* Dvorak UK, USA (keyboards) */
   { 158, "it", "CH" }, { 159, "de", "CH" },      /* Swiss1 French, 2 German, 3 Italian, 4 Romansh */
 };
 
@@ -1227,6 +1229,38 @@ int yt_territory_locale (int territory, const char **language, const char **regi
       {
         *language = territories[i].language;
         *region = territories[i].region;
+        return 0;
+      }
+  return -1;
+}
+
+int yt_use_locale (int territory, int keyboard)
+{
+  const char *l, *r;
+  int uk = territory >= 0 && territory <= 3;           /* (UK, Master, Compact, or the default) */
+  if ((uk || yt_territory_locale (territory, &l, &r)) && keyboard > 0 && keyboard != territory
+      && !yt_territory_locale (keyboard, &l, &r))
+    return yt_config_set ("language", l) || yt_config_set ("region", r) ? -1 : 0;
+  return yt_use_territory (territory);
+}
+
+int yt_lang_locale (const char *code, const char **language, const char **region)
+{
+  static const char *const locales[][3] = {
+    { "ar", "ar", "SA" }, { "bn", "bn", "IN" }, { "zh", "zh-CN", "CN" }, { "cs", "cs", "CZ" },
+    { "da", "da", "DK" }, { "nl", "nl", "NL" }, { "en", "en-GB", "GB" }, { "fi", "fi", "FI" },
+    { "fr", "fr", "FR" }, { "de", "de", "DE" }, { "el", "el", "GR" }, { "he", "iw", "IL" },
+    { "hi", "hi", "IN" }, { "hu", "hu", "HU" }, { "id", "id", "ID" }, { "it", "it", "IT" },
+    { "ja", "ja", "JP" }, { "ko", "ko", "KR" }, { "no", "no", "NO" }, { "pl", "pl", "PL" },
+    { "pt", "pt-PT", "PT" }, { "ro", "ro", "RO" }, { "ru", "ru", "RU" }, { "es", "es", "ES" },
+    { "sv", "sv", "SE" }, { "ta", "ta", "IN" }, { "th", "th", "TH" }, { "tr", "tr", "TR" },
+    { "uk", "uk", "UA" }, { "vi", "vi", "VN" },
+  };
+  for (size_t i = 0; i < sizeof locales / sizeof locales[0]; i++)
+    if (!strcmp (code, locales[i][0]))
+      {
+        *language = locales[i][1];
+        *region = locales[i][2];
         return 0;
       }
   return -1;

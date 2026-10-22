@@ -157,6 +157,19 @@ static void test_languages (void)
   CHECK (yt_territory_locale (9, &l, &r) == -1 && yt_territory_locale (999, &l, &r) == -1);   /* Esperanto: none */
   CHECK (yt_use_territory (6) == 0 && !strcmp (yt_config_get ("language"), "fr") && !strcmp (yt_config_get ("region"), "FR"));
   CHECK (yt_use_territory (9) == -1 && !strcmp (yt_config_get ("language"), "fr"));            /* left as it was */
+  /* the keyboard, when the territory is the UK's (RISC OS 5 has no France territory) */
+  CHECK (yt_use_locale (1, 6) == 0 && !strcmp (yt_config_get ("language"), "fr") && !strcmp (yt_config_get ("region"), "FR"));
+  CHECK (yt_use_locale (1, 1) == 0 && !strcmp (yt_config_get ("language"), "en-GB"));
+  CHECK (yt_use_locale (7, 1) == 0 && !strcmp (yt_config_get ("language"), "de"));            /* a territory's own wins */
+  CHECK (yt_use_locale (1, 80) == 0 && !strcmp (yt_config_get ("language"), "en-GB"));        /* ISO1: no language */
+  CHECK (yt_use_locale (0, 7) == 0 && !strcmp (yt_config_get ("region"), "DE"));
+  CHECK (yt_use_locale (9, 6) == 0 && !strcmp (yt_config_get ("language"), "fr"));            /* Esperanto: none, so the keyboard */
+  CHECK (yt_use_locale (1, 71) == 0 && !strcmp (yt_config_get ("region"), "US"));             /* Dvorak USA */
+  CHECK (yt_lang_locale ("fr", &l, &r) == 0 && !strcmp (l, "fr") && !strcmp (r, "FR"));
+  CHECK (yt_lang_locale ("he", &l, &r) == 0 && !strcmp (l, "iw") && yt_lang_locale ("xx", &l, &r) == -1);
+  for (int i = 0; yt_lang_menu (i); i++)
+    CHECK (yt_lang_locale (yt_lang_menu (i), &l, &r) == 0);                                   /* every menu language */
+  yt_config_set ("language", "fr");                                                           /* (French, below) */
   yt_lang_primary ("iw", c, sizeof c);
   CHECK (!strcmp (c, "he"));
   yt_lang_primary ("pt-BR", c, sizeof c);

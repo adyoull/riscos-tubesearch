@@ -82,11 +82,16 @@ time TubeSearch starts (over the Config file's settings).
 Language
 --------
 TubeSearch takes your language and country from RISC OS's territory
-(French in France, German in Germany, English and the UK in the UK...).
+(German in Germany, English and the UK in the UK...). RISC OS 5 has
+territory modules for only a few countries (there's none for France,
+and choosing a territory that isn't there can stop the machine
+starting), so on the UK territory it goes by the keyboard instead: a
+French keyboard gives French and France. Sound > My language chooses
+one yourself (Automatic goes back to the territory's or keyboard's).
 YouTube then gives results for that country, and its own words (titles
 it translates, "3 days ago", views) in that language; TubeSearch's own
-words stay English. Config's language and region settings choose
-others.
+words stay English. Config's language and region settings can also
+set them.
 
 Titles are shown in the desktop's alphabet (Latin-1 to Latin-10, Greek,
 Cyrillic, Hebrew, Arabic, Welsh, or UTF-8): with the right one, Polish,

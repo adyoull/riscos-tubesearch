@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.0-rc12 (2026-10-22): my language, without a territory
+
+- RISC OS 5 has territory modules for only a few countries (none for
+  France), and choosing one that isn't there stops the machine, so French
+  users stay on the UK territory and rc10/rc11 took them for English. On
+  the UK territory (or one with no language) TubeSearch now goes by the
+  configured keyboard (OS_Byte 71, 255): a French keyboard gives fr and
+  FR, a German one de and DE.
+- Sound > My language is now a menu: Automatic (the territory's or the
+  keyboard's) or one of 30 languages, which sets the language and country
+  YouTube is told. Saved in Choices (my_language).
+- The Dvorak keyboards' numbers (70 UK, 71 USA) are known.
+
 ## 0.2.0-rc11 (2026-10-21): the languages on the Sound menu
 
 - Sound has two more entries: Language, a list of 30 languages to play

@@ -137,6 +137,15 @@ int yt_territory_locale (int territory, const char **language, const char **regi
 /* Sets Config's language and region from the territory (before the
    Config files are read, so they can still say otherwise). 0, or -1. */
 int yt_use_territory (int territory);
+/* The same from the territory and the keyboard (OS_Byte 71, 255: the
+   same numbers). RISC OS 5 has territory modules for few countries, so a
+   French user is on the UK territory with a French keyboard: when the
+   territory is the UK's (or has no language), the keyboard's language is
+   used, if it has one. 0 if either gave one, or -1. */
+int yt_use_locale (int territory, int keyboard);
+/* The language and country for one of the Sound menu's languages
+   ("fr" -> "fr", "FR"); 0, or -1 if it isn't one of them. */
+int yt_lang_locale (const char *code, const char **language, const char **region);
 /* "en" -> "English" (or the code itself). */
 const char *yt_lang_name (const char *code);
 /* The languages the Sound menus offer, in the order of their English

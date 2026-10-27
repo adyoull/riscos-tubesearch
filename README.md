@@ -33,10 +33,17 @@ type a search and press Return.
 | Back | the page before |
 | Subscriptions | the newest videos of the channels you follow (Adjust: the channels) |
 | Refresh (or F5) | the page on screen fetched again (a live stream that has started, new videos) |
-| Menu | Play, Related, Channel, Subscribe, Back, Refresh, Quality (360p–1080p), Frame rate (30/60), Sound (my language / original / a language; languages you also understand) |
+| Menu | Play, Related, Channel, Save video, Subscribe, Back, Refresh, Quality (360p–1080p), Frame rate (30/60), Sound (my language / original / a language; languages you also understand) |
 | a pasted YouTube address | plays it, and shows what's related |
 | Menu on the icon bar icon | Info, Search, Subscriptions, My channels, Quality, Frame rate, Sound, Quit |
 | Uploaded (beside Search) | Any time, Today, This week, This month, This year |
+
+**Save video** (on a video's menu) saves it as an MP4: drag the save box's
+file icon to a Filer window. TubeSearch fetches the picture and sound
+(HLS pieces, or DASH in 4 MB ranges) and `ffmpeg` joins them without
+re-encoding, in a TaskWindow; so saving needs an ffmpeg command: !FFmpeg
+(riscos-ffmpeg) or any RISC OS port from FFmpeg 2.x on. Only save what you
+have the right to keep.
 
 **Subscriptions** are kept on the machine (`Choices:TubeSearch.Subscriptions`),
 with no YouTube account. Drop Google Takeout's `subscriptions.csv`, or a

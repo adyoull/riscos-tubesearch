@@ -218,6 +218,18 @@ int yt_hls_choose (const char *m3u8, size_t len, const char *base_url, int maxq,
 /* Splits an https address into host and path (for http_get). 0, or -1. */
 int yt_split_url (const char *url, char *host, size_t hostsize, char *path, size_t pathsize);
 
+/* The pieces of an HLS media playlist, for saving a video: the
+   addresses (resolved against base_url), the #EXT-X-MAP one first if
+   there is one, into *uris (malloc'd, each malloc'd; yt_free_strings), and
+   the length in seconds (the #EXTINFs). The number of addresses, or -1
+   with the reason in err: not a media playlist, encrypted, or live (no
+   #EXT-X-ENDLIST), or in byte ranges of one file. */
+int yt_hls_segments (const char *m3u8, size_t len, const char *base_url, char ***uris, double *seconds,
+                     char *err, size_t errlen);
+void yt_free_strings (char **v, int n);
+/* A googlevideo address's clen= (the stream's size in bytes), or -1. */
+long long yt_url_clen (const char *url);
+
 /* What Reel reads: yt-dlp's -j JSON (title, the addresses, and the
    headers). malloc'd. */
 char *yt_reel_json (const yt_play *p, const char *video_id);

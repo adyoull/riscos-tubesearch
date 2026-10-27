@@ -1,7 +1,35 @@
 # Changelog
 
-## Unreleased
+## 0.2.0-rc13 (2026-10-27): saving videos
 
+- Save video... on a video's menu: a save box whose file icon is dragged
+  to a Filer window (or a full name typed). The streams are found as for
+  playing (Quality, Frame rate, Sound); TubeSearch fetches them into
+  <name>_v and <name>_a (HLS piece by piece; DASH in 4 MB ranges, as
+  yt-dlp does), with the media user agent, through the proxy if one is
+  set, each request tried three times. !FFmpeg's ffmpeg then joins them
+  into <name>_t without re-encoding, in a TaskWindow that reports back
+  (-task/-txt); once it's complete it takes the name (a file there
+  already is only replaced then), is typed from MimeMap, and the pieces
+  are deleted, but only once the MP4 has been checked to be whole (its
+  boxes run to the end, with an index, moov, and data, mdat): a join cut
+  short is reported, not taken. ffmpeg writes it in one pass (no
+  -movflags +faststart: the second pass rewrote the whole file, and gave
+  an MP4 Reel couldn't open in an early test build).
+  Quitting while a video is being saved is objected to.
+  A Saving window shows a progress bar (the pieces, then ffmpeg's own
+  -progress while joining) with Stop, and the status line follows it;
+  the menu item becomes Stop saving (which cancels the fetch, or sends
+  the TaskWindow Morite).
+  Needs an ffmpeg command: !FFmpeg (riscos-ffmpeg) or another RISC
+  OS port (the alias, or Run$Path), FFmpeg 2.x or later; live streams
+  can't be saved.
+- tscli save ID LINES FILE (TUBE_NOJOIN=1: leave the two files).
+- Pictures: one that fails to arrive (a dropped connection, a busy
+  server) is fetched again, up to three times; a 320x180 one that isn't
+  there is fetched at 480x360 instead. Subscriptions' pictures come from
+  i.ytimg.com, as the other lists' do, rather than the feeds' i1-i4
+  hosts; some of them stayed grey.
 - Built and tested on GitHub for every push and pull request, in
   riscos-crossdev 1.8.2's container image (.riscos-deps), with a pull
   request when riscos-crossdev makes a new release (riscos-crossdev's CI

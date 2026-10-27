@@ -170,7 +170,7 @@ static void test_feed (void)
   CHECK (!strcmp (l.items[0].meta, "New \xB7 1.2M views \xB7 20 hours ago"));
   CHECK (!strcmp (l.items[1].meta, "999 views \xB7 1 week ago") && !strcmp (l.items[1].title, "Episode - deux"));
   CHECK (!strcmp (l.items[2].meta, "1 view \xB7 1 year ago"));
-  CHECK (!strcmp (l.items[0].thumb_url, "https://i1.ytimg.com/vi/aaaaaaaaaa1/mqdefault.jpg"));
+  CHECK (!strcmp (l.items[0].thumb_url, "https://i.ytimg.com/vi/aaaaaaaaaa1/mqdefault.jpg"));   /* (i.ytimg.com, as the lists) */
   CHECK (subs_parse_feed (fa, la, &l, now, seen, err, sizeof err, NULL, 0) == 0);                  /* (no doubles) */
   CHECK (subs_parse_feed (fb, lb, &l, now, seen, err, sizeof err, NULL, 0) == 2 && l.n == 5);
   CHECK (!strcmp (l.items[4].meta, "10M views \xB7 6 days ago") && !strcmp (l.items[3].channel, "Manchester Airport"));

@@ -142,6 +142,38 @@ static void test_text (void)
   }
 }
 
+/* Saving: a media playlist's pieces; a stream's size from its address */
+static void test_save_parts (void)
+{
+  char **u, err[200];
+  double secs;
+  const char *pl = "#EXTM3U\n#EXT-X-VERSION:6\n#EXT-X-TARGETDURATION:5\n#EXT-X-MAP:URI=\"init.mp4\"\n"
+                   "#EXTINF:5.005,\nhttps://rr1.example.com/a/1\n#EXTINF:4.5,\n/root/2\r\n#EXTINF:1,\nrel/3\n#EXT-X-ENDLIST\n";
+  const char *base = "https://manifest.googlevideo.com/api/manifest/hls_playlist/id/x/index.m3u8?q=1";
+  int n = yt_hls_segments (pl, strlen (pl), base, &u, &secs, err, sizeof err);
+  CHECK (n == 4 && !strcmp (u[0], "https://manifest.googlevideo.com/api/manifest/hls_playlist/id/x/init.mp4")
+         && !strcmp (u[1], "https://rr1.example.com/a/1") && !strcmp (u[2], "https://manifest.googlevideo.com/root/2")
+         && !strcmp (u[3], "https://manifest.googlevideo.com/api/manifest/hls_playlist/id/x/rel/3") && secs > 10.4 && secs < 10.6);
+  yt_free_strings (u, n);
+  {
+    const char *live = "#EXTM3U\n#EXTINF:2,\nhttps://a.b/1\n";
+    const char *master = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nhttps://a.b/v.m3u8\n";
+    const char *aes = "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"k\"\n#EXTINF:2,\nhttps://a.b/1\n#EXT-X-ENDLIST\n";
+    const char *none = "#EXTM3U\n#EXT-X-KEY:METHOD=NONE\n#EXTINF:2,\nhttps://a.b/1\n#EXT-X-ENDLIST\n";
+    const char *empty = "#EXTM3U\n#EXT-X-ENDLIST\n";
+    CHECK (yt_hls_segments (live, strlen (live), base, &u, &secs, err, sizeof err) == -1 && strstr (err, "live"));
+    CHECK (yt_hls_segments (master, strlen (master), base, &u, &secs, err, sizeof err) == -1 && strstr (err, "master"));
+    CHECK (yt_hls_segments (aes, strlen (aes), base, &u, &secs, err, sizeof err) == -1 && strstr (err, "encrypted"));
+    CHECK (yt_hls_segments (empty, strlen (empty), base, &u, &secs, err, sizeof err) == -1);
+    CHECK (yt_hls_segments ("<html>", 6, base, &u, &secs, err, sizeof err) == -1);
+    CHECK ((n = yt_hls_segments (none, strlen (none), base, &u, &secs, err, sizeof err)) == 1);
+    yt_free_strings (u, n);
+  }
+  CHECK (yt_url_clen ("https://rr1.googlevideo.com/videoplayback?expire=1&clen=123456&dur=2") == 123456);
+  CHECK (yt_url_clen ("https://rr1.googlevideo.com/videoplayback?xclen=5&dur=2") == -1);
+  CHECK (yt_url_clen ("https://rr1.googlevideo.com/videoplayback?clen=&dur=2") == -1 && yt_url_clen (NULL) == -1);
+}
+
 /* The language and country from RISC OS's territory; languages understood */
 static void test_languages (void)
 {
@@ -684,6 +716,7 @@ int main (int argc, char **argv)
   test_json ();
   test_text ();
   test_languages ();
+  test_save_parts ();
   test_requests ();
   test_lists ();
   test_player ();

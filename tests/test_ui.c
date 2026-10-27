@@ -10,12 +10,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include <sys/stat.h>
 #include "fake.h"
 #define JPEG_Info 0x49980          /* (not in UnixLib's swis.h) */
 #define JPEG_PlotScaled 0x49982
 #include "swis.h"
 #include "../src/ui.h"
+#include "../src/save.h"
+#include "../src/thumbs.h"
 #include "../src/http.h"
 #include "../src/transport.h"
 #include "../src/yt.h"
@@ -31,7 +34,7 @@ typedef struct {
   int extent[4];
 } fwin;
 
-static fwin wins[4];                       /* handle 1: main, 2: toolbar, 3: Info */
+static fwin wins[6];                       /* handle 1: main, 2: toolbar, 3: Info, 4: Save video, 5: Saving */
 static int nwins, iconbar_icons, forced, carets, extents;
 static char drawn[1 << 20];                /* every string Wimp_TextOp plotted */
 static size_t drawn_len;
@@ -40,6 +43,10 @@ static char *saved_data;
 static int sprite_outputs, sprite_plots, jpeg_plots, menus_made;
 static void *last_menu;
 static int acks_sent;
+/* the smallest MP4 save_check_mp4 takes: ftyp, moov, mdat */
+#define MINI_MP4 "\0\0\0\x10" "ftypisom\0\0\0\0" "\0\0\0\x08" "moov" "\0\0\0\x0C" "mdat" "data"
+static int drags, morites, datasave[64], datasave_to, ptr_win = -1, ptr_icon = -1, typed_as;
+static char typed_path[600];
 static char last_search[8192];             /* the body of the newest search request */
 static int search_requests;
 
@@ -176,7 +183,19 @@ static const _kernel_oserror *wimp (int swi, int r[10])
         }
       return NULL;
     case Wimp_CreateMenu: menus_made++; last_menu = (void *) r[1]; return NULL;
-    case Wimp_GetPointerInfo: ((int *) r[1])[2] = 0; return NULL;
+    case Wimp_SpriteOp:                              /* 40: is there such a sprite? (only file_bf4) */
+      return r[0] == 40 && !strcmp ((const char *) r[2], "file_bf4") ? NULL : &err_bad;
+    case Wimp_DragBox: drags++; return NULL;
+    case Wimp_ResizeIcon:                            /* the icon's new box, kept */
+      memcpy (&wins[r[0]].block[22 + 8 * r[1]], &r[2], 4 * sizeof (int));
+      return NULL;
+    case Wimp_GetPointerInfo:
+      ((int *) r[1])[0] = 500;
+      ((int *) r[1])[1] = 400;
+      ((int *) r[1])[2] = 0;
+      ((int *) r[1])[3] = ptr_win;
+      ((int *) r[1])[4] = ptr_icon;
+      return NULL;
     case Wimp_ReportError:
       snprintf (report, sizeof report, "%s", ((const _kernel_oserror *) r[0])->errmess);
       r[1] = 1;
@@ -195,6 +214,14 @@ static const _kernel_oserror *wimp (int swi, int r[10])
         quit_sent_to = r[2];
       if (r[0] == 17 && ((int *) r[1])[4] == 4)
         acks_sent++;                                 /* Message_DataLoadAck */
+      if (((int *) r[1])[4] == 1)                    /* Message_DataSave: kept, with a reference */
+        {
+          memcpy (datasave, (int *) r[1], sizeof datasave);
+          datasave_to = r[2];
+          ((int *) r[1])[2] = datasave[2] = 0x5151;
+        }
+      if (((int *) r[1])[4] == 0x808C4)              /* Message_TaskWindow_Morite */
+        morites++;
       return NULL;
     }
   return &err_bad;
@@ -209,6 +236,17 @@ static const _kernel_oserror *os (int swi, int r[10])
       return NULL;
     case OS_Byte: r[1] = r[1] == 255 ? 1 : 101; return NULL;   /* a UK keyboard; Latin-1 */
     case Territory_Number: r[0] = 6; return NULL;    /* France */
+    case 0x50B00:                                    /* MimeMap_Translate: extension mp4 -> &BF4 */
+      if (r[0] != 3 || r[2] != 0 || strcmp ((const char *) r[1], "mp4"))
+        return &err_bad;
+      r[3] = 0xBF4;
+      return NULL;
+    case OS_FSControl:                               /* 25: rename */
+      if (r[0] != 25 || rename ((const char *) r[1], (const char *) r[2]))
+        return &err_bad;
+      return NULL;
+    case 0x42400: drags++; return NULL;              /* DragASprite_Start */
+    case 0x42401: return NULL;                       /* DragASprite_Stop */
     case OS_Plot: return NULL;
     case ColourTrans_SetGCOL: return NULL;
     case OS_File:
@@ -221,6 +259,18 @@ static const _kernel_oserror *os (int swi, int r[10])
         {
           struct stat st;
           r[0] = stat ((const char *) r[1], &st) ? 0 : S_ISDIR (st.st_mode) ? 2 : 1;
+          r[4] = r[0] ? (int) st.st_size : 0;
+          return NULL;
+        }
+      if (r[0] == 6)                                 /* delete */
+        {
+          unlink ((const char *) r[1]);
+          return NULL;
+        }
+      if (r[0] == 18)                                /* set the type */
+        {
+          snprintf (typed_path, sizeof typed_path, "%s", (const char *) r[1]);
+          typed_as = r[2];
           return NULL;
         }
       if (r[0] != 10)
@@ -267,9 +317,10 @@ static void install (void)
   static const int w[] = { Wimp_SendMessage, Wimp_Initialise, Wimp_CreateIcon, Wimp_CreateWindow, Wimp_OpenWindow,
     Wimp_GetWindowState, Wimp_CloseWindow, Wimp_SetExtent, Wimp_ForceRedraw, Wimp_SetIconState, Wimp_GetIconState,
     Wimp_SetCaretPosition, Wimp_ProcessKey, Wimp_CloseDown, Wimp_RedrawWindow, Wimp_GetRectangle,
-    Wimp_TextOp, Wimp_CreateMenu, Wimp_GetPointerInfo, Wimp_ReportError, Wimp_StartTask, 0 };
+    Wimp_TextOp, Wimp_CreateMenu, Wimp_GetPointerInfo, Wimp_ReportError, Wimp_StartTask, Wimp_SpriteOp,
+    Wimp_DragBox, Wimp_ResizeIcon, 0 };
   static const int o[] = { OS_ReadModeVariable, OS_Byte, OS_Plot, ColourTrans_SetGCOL, OS_File,
-    OS_SpriteOp, JPEG_Info, JPEG_PlotScaled, Territory_Number, 0 };
+    OS_SpriteOp, JPEG_Info, JPEG_PlotScaled, Territory_Number, 0x50B00, 0x42400, 0x42401, OS_FSControl, 0 };
   for (int i = 0; w[i]; i++)
     fake_swi (w[i], NULL, wimp);
   for (int i = 0; o[i]; i++)
@@ -279,7 +330,7 @@ static void install (void)
 /* ---- the fake network: recorded answers ----------------------------------- */
 
 typedef struct { char rx[65536]; size_t rxlen; char *tx; size_t txlen, txpos; int requests; } fconn;
-static int api_requests, picture_requests, player_requests;
+static int api_requests, picture_requests, player_requests, flaky_requests, gone_mq, gone_hq;
 static unsigned net_clock;
 
 static char *load (const char *name, size_t *len)
@@ -304,7 +355,7 @@ static char *load (const char *name, size_t *len)
 }
 
 static int iframe_requests, playerjs_requests, tv_requests, manifest_requests, hls_requests, hls_broken;
-static int feed_requests;
+static int feed_requests, playlist_requests, piece_requests;
 
 static void answer (fconn *c, const char *req)
 {
@@ -350,6 +401,31 @@ static void answer (fconn *c, const char *req)
       len = strlen (body);
       code = 404;
     }
+  else if (strstr (req, "Host: manifest.googlevideo.com") && strstr (req, "/hls_playlist/"))
+    {
+      /* one stream's media playlist (saving): three pieces each */
+      const char *kind = strstr (req, "/itag/233/") || strstr (req, "/itag/234/") ? "a" : "v";
+      char pl[600];
+      snprintf (pl, sizeof pl, "#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2.0,\nhttps://rr1---sn-fake.googlevideo.com/seg/%s/0\n"
+                "#EXTINF:2.0,\n/seg/%s/1\n#EXTINF:2.0,\nhttps://rr1---sn-fake.googlevideo.com/seg/%s/2\n#EXT-X-ENDLIST\n",
+                kind, kind, kind);
+      playlist_requests++;
+      body = strdup (pl);
+      len = strlen (body);
+    }
+  else if (!strncmp (req, "GET /seg/", 9))
+    {
+      /* a piece: its own name, 1000 times */
+      char name[16];
+      size_t n = strcspn (req + 9, " ");
+      snprintf (name, sizeof name, "%.*s|", (int) (n < 10 ? n : 10), req + 9);
+      piece_requests++;
+      len = strlen (name) * 1000;
+      body = malloc (len + 1);
+      for (size_t i = 0; i < 1000; i++)
+        memcpy (body + i * strlen (name), name, strlen (name));
+      body[len] = 0;
+    }
   else if (strstr (req, "Host: manifest.googlevideo.com"))
     {
       hls_requests++;                                /* YouTube's HLS master playlist */
@@ -364,7 +440,23 @@ static void answer (fconn *c, const char *req)
   else if (!strncmp (req, "GET ", 4))
     {
       picture_requests++;
-      body = strdup ("\xFF\xD8\xFF\xE0 a JPEG of sorts");
+      if (strstr (req, "/vi/flaky/") && flaky_requests++ == 0)
+        {
+          body = strdup ("busy");                   /* (once) */
+          code = 503;
+        }
+      else if (strstr (req, "/vi/gone/mqdefault.jpg"))
+        {
+          gone_mq++;
+          body = strdup ("not here");
+          code = 404;
+        }
+      else
+        {
+          if (strstr (req, "/vi/gone/hqdefault.jpg"))
+            gone_hq++;
+          body = strdup ("\xFF\xD8\xFF\xE0 a JPEG of sorts");
+        }
       len = strlen (body);
     }
   else
@@ -488,6 +580,11 @@ static void click (int win, int icon, int x, int y, int buttons)
 }
 
 /* A click on tile i at (dx, dy) from its top left, in the work area. */
+static void menu_open_none (void)
+{
+  /* (a menu left open: the next one replaces it, as the Wimp does) */
+}
+
 static void click_tile (int i, int dx, int dy, int buttons)
 {
   fwin *w = &wins[1];
@@ -542,7 +639,7 @@ int main (int argc, char **argv)
   yt_config_set ("language", "en-GB");         /* (the rest expects the defaults) */
   yt_config_set ("region", "GB");
   yt_config_set ("stream_format", "dash");     /* (HLS has its own part, near the end) */
-  CHECK (iconbar_icons == 1 && nwins == 3, "an icon bar icon and three windows");
+  CHECK (iconbar_icons == 1 && nwins == 5, "an icon bar icon and five windows (main, toolbar, Info, Save video, Saving)");
   /* the Info box: four labels and four values; Version says which */
   {
     const int *b = wins[3].block;
@@ -670,7 +767,7 @@ int main (int argc, char **argv)
   /* Menu: Quality > 720p, then play again */
   click_tile (3, 100, 100, 2);
   {
-    int sel[4] = { 6, 2, -1, -1 };              /* Play, Related, Channel, Subscribe, Back, Refresh, Quality > 720p */
+    int sel[4] = { 7, 2, -1, -1 };              /* Play, Related, Channel, Save video, Subscribe, Back, Refresh, Quality > 720p */
     ui_event (9, sel);
     click_tile (3, 100, 100, 4);
     pump ();
@@ -694,8 +791,8 @@ int main (int argc, char **argv)
     click_tile (3, 100, 100, 2);
     {
       const int *m = (const int *) last_menu;
-      int sel[4] = { 5, -1, -1, -1 };          /* Play, Related, Channel, Subscribe, Back, Refresh */
-      CHECK (m && !strcmp ((const char *) &m[7 + 5 * 6 + 3], "Refresh"), "Refresh on the menu");
+      int sel[4] = { 6, -1, -1, -1 };          /* Play, Related, Channel, Save video, Subscribe, Back, Refresh */
+      CHECK (m && !strcmp ((const char *) &m[7 + 6 * 6 + 3], "Refresh"), "Refresh on the menu");
       ui_event (9, sel);
       pump ();
       CHECK (api_requests == before + 3, "and from the menu");
@@ -707,7 +804,7 @@ int main (int argc, char **argv)
   {
     char path[600], text[600] = "";
     FILE *f;
-    int sel[4] = { 7, 1, -1, -1 };              /* ... Quality, Frame rate > 60 a second */
+    int sel[4] = { 8, 1, -1, -1 };              /* ... Quality, Frame rate > 60 a second */
     size_t n;
     click_tile (3, 100, 100, 2);
     ui_event (9, sel);
@@ -945,8 +1042,8 @@ int main (int argc, char **argv)
     click_tile (1, 100, 100, 2);
     {
       const int *m = (const int *) last_menu;
-      int sel[4] = { 8, 1, -1, -1 };            /* Play, Related, Channel, Subscribe, Back, Refresh, Quality, Frame rate, Sound > Original */
-      CHECK (m && !strcmp ((const char *) &m[7 + 8 * 6 + 3], "Sound") && (m[7 + 8 * 6] & 0x80), "the Sound menu, last");
+      int sel[4] = { 9, 1, -1, -1 };            /* Play, Related, Channel, Save video, Subscribe, Back, Refresh, Quality, Frame rate, Sound > Original */
+      CHECK (m && !strcmp ((const char *) &m[7 + 9 * 6 + 3], "Sound") && (m[7 + 9 * 6] & 0x80), "the Sound menu, last");
       ui_event (9, sel);
     }
     CHECK (!strcmp (yt_config_get ("audio_language"), "original"), "Sound > Original chosen");
@@ -963,7 +1060,7 @@ int main (int argc, char **argv)
         }
       click_tile (1, 100, 100, 2);
       m = (const int *) last_menu;
-      sm = m ? (const int *) m[7 + 8 * 6 + 1] : NULL;
+      sm = m ? (const int *) m[7 + 9 * 6 + 1] : NULL;
       CHECK (sm && !strcmp ((const char *) &sm[7 + 2 * 6 + 3], "Language") && (sm[7 + 1 * 6] & 2)
              && (sm[7 + 3 * 6] & 0x80) && !strcmp ((const char *) sm[7 + 3 * 6 + 3], "I also understand"),
              "Sound: My language, Original, Language, I also understand");
@@ -972,39 +1069,39 @@ int main (int argc, char **argv)
       CHECK (lm && um && fr >= 0 && !strncmp ((const char *) &lm[7 + fr * 6 + 3], "French", 6)
              && !(lm[7 + fr * 6] & 1) && !(um[7 + en * 6] & 1), "the languages, none ticked");
       {
-        int sel[4] = { 8, 2, fr, -1 };
+        int sel[4] = { 9, 2, fr, -1 };
         ui_event (9, sel);
       }
       CHECK (!strcmp (yt_config_get ("audio_language"), "fr"), "Sound > Language > French");
       click_tile (1, 100, 100, 2);
       m = (const int *) last_menu;
-      sm = (const int *) m[7 + 8 * 6 + 1];
+      sm = (const int *) m[7 + 9 * 6 + 1];
       lm = (const int *) sm[7 + 2 * 6 + 1];
       CHECK ((sm[7 + 2 * 6] & 1) && (lm[7 + fr * 6] & 1) && !(sm[7] & 1), "French ticked (and Language)");
       {
-        int sel[4] = { 8, 3, en, -1 };
+        int sel[4] = { 9, 3, en, -1 };
         ui_event (9, sel);
       }
       CHECK (!strcmp (yt_config_get ("languages"), "en"), "I also understand > English");
       click_tile (1, 100, 100, 2);
       m = (const int *) last_menu;
-      sm = (const int *) m[7 + 8 * 6 + 1];
+      sm = (const int *) m[7 + 9 * 6 + 1];
       um = (const int *) sm[7 + 3 * 6 + 1];
       CHECK (um[7 + en * 6] & 1, "English ticked");
       {
-        int sel[4] = { 8, 3, en, -1 };
+        int sel[4] = { 9, 3, en, -1 };
         ui_event (9, sel);
       }
       CHECK (!strcmp (yt_config_get ("languages"), ""), "and off again");
       /* Sound > My language > French: the language and country YouTube is told; then Automatic */
       click_tile (1, 100, 100, 2);
       m = (const int *) last_menu;
-      sm = (const int *) m[7 + 8 * 6 + 1];
+      sm = (const int *) m[7 + 9 * 6 + 1];
       {
         const int *mm = (const int *) sm[7 + 1];
         CHECK (mm && !strcmp ((const char *) &mm[7 + 3], "Automatic") && (mm[7] & 1) && (mm[7] & 2)
                && !strncmp ((const char *) &mm[7 + (fr + 1) * 6 + 3], "French", 6), "My language: Automatic (ticked), then the languages");
-        int sel[4] = { 8, 0, fr + 1, -1 };
+        int sel[4] = { 9, 0, fr + 1, -1 };
         ui_event (9, sel);
       }
       CHECK (!strcmp (yt_config_get ("language"), "fr") && !strcmp (yt_config_get ("region"), "FR")
@@ -1023,10 +1120,10 @@ int main (int argc, char **argv)
       }
       click_tile (1, 100, 100, 2);
       m = (const int *) last_menu;
-      sm = (const int *) m[7 + 8 * 6 + 1];
+      sm = (const int *) m[7 + 9 * 6 + 1];
       CHECK (!strcmp ((const char *) sm[7 + 3], "My language (French)"), "and named");
       {
-        int sel[4] = { 8, 0, 0, -1 };             /* Automatic */
+        int sel[4] = { 9, 0, 0, -1 };             /* Automatic */
         ui_event (9, sel);
       }
       CHECK (!strcmp (yt_config_get ("language"), "fr") && !strcmp (yt_config_get ("region"), "FR")
@@ -1037,7 +1134,7 @@ int main (int argc, char **argv)
     }
     click_tile (1, 100, 100, 2);
     {
-      const int *m = (const int *) last_menu, *sm = m ? (const int *) m[7 + 8 * 6 + 1] : NULL;
+      const int *m = (const int *) last_menu, *sm = m ? (const int *) m[7 + 9 * 6 + 1] : NULL;
       CHECK (sm && (sm[7 + 2] & 0x100) && !strcmp ((const char *) sm[7 + 3], "My language (German)"),
              "Sound's first item names my language");
     }
@@ -1153,16 +1250,369 @@ int main (int argc, char **argv)
     click_tile (0, 100, 100, 2);
     {
       const int *m = (const int *) last_menu;
-      int sub[4] = { 3, -1, -1, -1 };             /* Play, Related, Channel, Subscribe */
-      CHECK (m && !strcmp ((const char *) &m[7 + 3 * 6 + 3], "Subscribe"), "a video's channel: Subscribe");
+      int sub[4] = { 4, -1, -1, -1 };             /* Play, Related, Channel, Save video, Subscribe */
+      CHECK (m && !strcmp ((const char *) &m[7 + 4 * 6 + 3], "Subscribe"), "a video's channel: Subscribe");
       ui_event (9, sub);
     }
     CHECK (strstr (status (), "Subscribed to ") && strstr (status (), "(3 channels)"), "subscribed");
     click_tile (0, 100, 100, 2);
     {
       const int *m = (const int *) last_menu;
-      CHECK (m && !strcmp ((const char *) &m[7 + 3 * 6 + 3], "Unsubscribe"), "now Unsubscribe");
+      CHECK (m && !strcmp ((const char *) &m[7 + 4 * 6 + 3], "Unsubscribe"), "now Unsubscribe");
     }
+  }
+
+  /* Save video...: the save box (a drag, or a full name), the streams
+     fetched beside the MP4, then !FFmpeg's ffmpeg in a TaskWindow joins them */
+  {
+    char out[600], v[620], a[620], obey[600];
+    static char text[16000];
+    const int *m, *box;
+    FILE *f;
+    size_t n;
+    int msg[64];
+    mkdir (scrap, 0777);                          /* (where the saved files go here) */
+    type_and_search ("test");
+    pump ();
+    click_tile (0, 100, 100, 2);
+    m = (const int *) last_menu;
+    CHECK (m && (m[7 + 3 * 6 + 2] & 0x100) && !strcmp ((const char *) m[7 + 3 * 6 + 3], "Save video...") && m[7 + 3 * 6 + 1] == 4,
+           "Save video... after Channel, leading to the save box");
+    box = wins[4].block;
+    CHECK (!strcmp ((const char *) box[18], "Save video") && strstr ((const char *) box[22 + 8 + 5], "/mp4"),
+           "its name: the title, made a RISC OS name");
+    snprintf (text, sizeof text, "%s", (const char *) box[22 + 8 + 5]);
+    CHECK (!strchr (text, ' ') && !strchr (text, '.') && !strchr (text, ':') && strlen (text) > 4, "(no spaces, dots or colons)");
+    {
+      char leaf[64];
+      save_leaf_name ("A: B. c/d \xC3\xA9t\xC3\xA9 *#$&@^%|<>\"", leaf, sizeof leaf, 40);
+      CHECK (!strcmp (leaf, "A_B_cd_\xE9t\xE9"), "names: RISC OS's special letters out, spaces as _, accents kept");
+      save_leaf_name ("...", leaf, sizeof leaf, 40);
+      CHECK (!strcmp (leaf, "video"), "nothing left: video");
+      save_leaf_name ("abcdefghijklmnopqrstuvwxyz", leaf, sizeof leaf, 10);
+      CHECK (!strcmp (leaf, "abcdefghij"), "at most the length asked for");
+    }
+    CHECK (!strcmp ((const char *) box[22 + 5], "file_bf4"), "the file icon: MimeMap's MP4 type's sprite");
+    /* without !FFmpeg: said so */
+    unsetenv ("Alias$ffmpeg");
+    report[0] = 0;
+    snprintf ((char *) box[22 + 8 + 5], 256, "%.240s/x_mp4", scrap);
+    {
+      int k[7] = { 4, 1, 0, 0, -1, 0, 13 };
+      ui_event (8, k);
+    }
+    CHECK (strstr (report, "needs ffmpeg") != NULL, "no ffmpeg: said so, nothing fetched");
+    /* another port's ffmpeg, on Run$Path (no alias): fine */
+    {
+      FILE *rf = fopen ("Run:ffmpeg", "w");
+      if (rf)
+        fclose (rf);
+      report[0] = 0;
+      snprintf ((char *) box[22 + 8 + 5], 256, "%.240s/y_mp4", scrap);
+      {
+        int k[7] = { 4, 1, 0, 0, -1, 0, 13 };
+        ui_event (8, k);
+      }
+      CHECK (!strstr (report, "needs ffmpeg") && strstr (status (), "finding the streams"), "an ffmpeg on Run$Path (another port's): fine");
+      {
+        int stop[4] = { 3, -1, -1, -1 };
+        click_tile (0, 100, 100, 2);
+        ui_event (9, stop);
+      }
+      unlink ("Run:ffmpeg");
+    }
+    setenv ("Alias$ffmpeg", "WimpSlot -min 44032K|MRun <FFmpeg$Dir>.ffmpeg %*0", 1);
+    /* a bare name: drag it, or type a full one */
+    report[0] = 0;
+    snprintf ((char *) box[22 + 8 + 5], 256, "justaname");
+    {
+      int c[5] = { 0, 0, 4 /* Select */, 4, 2 };
+      ui_event (6, c);
+    }
+    CHECK (strstr (report, "drag the file icon") != NULL, "a bare name: drag it or type a full one");
+    snprintf ((char *) box[22 + 8 + 5], 256, "My_video/mp4");
+    /* dragged to a Filer window (window 99): Message_DataSave there, with the leaf and the type */
+    drags = 0;
+    {
+      int c[5] = { 0, 0, 64, 4, 0 };
+      ui_event (6, c);
+    }
+    CHECK (drags == 1, "dragging the file icon");
+    ptr_win = 99;
+    ptr_icon = 0;
+    datasave[0] = 0;
+    ui_event (7, msg);
+    CHECK (datasave_to == 99 && datasave[4] == 1 && datasave[5] == 99 && datasave[10] == 0xBF4
+           && !strcmp ((const char *) &datasave[11], "My_video/mp4"), "dropped: DataSave to the Filer, leaf and type");
+    /* the Filer's answer: the full name. Then the streams, then the join */
+    snprintf (out, sizeof out, "%s/saved_mp4", scrap);
+    if ((f = fopen (out, "wb")))
+      {
+        fputs ("an older file of that name", f);
+        fclose (f);
+      }
+    memset (msg, 0, sizeof msg);
+    msg[1] = 99; msg[3] = 0x5151; msg[4] = 2; msg[9] = 1000;
+    snprintf ((char *) &msg[11], 200, "%.190s", out);
+    playlist_requests = piece_requests = 0;
+    started[0] = 0;
+    ui_event (17, msg);
+    CHECK (strstr (status (), "finding the streams") != NULL, "saving: finding the streams");
+    CHECK (wins[5].open && !strcmp ((const char *) wins[5].block[22 + 5], (const char *) wins[5].block[22 + 5])
+           && !strcmp ((const char *) wins[5].block[22 + 8 * 3 + 5], "Finding the streams..."),
+           "the Saving window opens: Finding the streams...");
+    CHECK (wins[5].block[22 + 8 * 2 + 2] == wins[5].block[22 + 8 * 2 + 0], "its bar empty");
+    click_tile (0, 100, 100, 2);
+    m = (const int *) last_menu;
+    CHECK (m && !strcmp ((const char *) &m[7 + 3 * 6 + 3], "Stop saving"), "the menu says Stop saving meanwhile");
+    {
+      int pq[6] = { 24, 0x99, 0x777, 0, 8, 0 };
+      report[0] = 0;
+      ui_event (18, pq);
+      CHECK (strstr (report, "being saved") && pq[3] == 0x777, "quitting meanwhile: objected to (PreQuit acknowledged), said why");
+    }
+    menu_open_none ();
+    pump ();
+    snprintf (v, sizeof v, "%s_v", out);
+    snprintf (a, sizeof a, "%s_a", out);
+    CHECK (playlist_requests == 2 && piece_requests == 6, "both playlists, then their six pieces");
+    if ((f = fopen (v, "rb")))
+      {
+        text[fread (text, 1, sizeof text - 1, f)] = 0;
+        fclose (f);
+      }
+    CHECK (!strncmp (text, "v/0|v/0|", 8) && strstr (text, "v/0|v/1|") && strstr (text, "v/1|v/2|") && strlen (text) == 3 * 4000,
+           "the picture's pieces, in order, in <name>_v");
+    if ((f = fopen (a, "rb")))
+      {
+        text[fread (text, 1, sizeof text - 1, f)] = 0;
+        fclose (f);
+      }
+    CHECK (!strncmp (text, "a/0|", 4) && strlen (text) == 3 * 4000, "the sound's in <name>_a");
+    CHECK (strstr (started, "TaskWindow \"Obey ") && strstr (started, "-task &1234") && strstr (started, "-txt &54535631")
+           && strstr (started, "-quit"), "then the join, in a TaskWindow that reports to us");
+    CHECK (strstr (status (), "joining") != NULL, "status: joining");
+    {
+      const int *bar = &wins[5].block[22 + 8 * 2], *back = &wins[5].block[22 + 8 * 1];
+      int full = back[2] - back[0] - 8, got = bar[2] - bar[0];
+      CHECK (wins[5].open && got * 100 >= full * 89 && got * 100 <= full * 91, "the bar at 90% when the pieces are in");
+      CHECK (strstr (started, "") && strstr ((const char *) wins[5].block[22 + 8 * 3 + 5], "Joining"), "and Joining...");
+    }
+    snprintf (obey, sizeof obey, "%s", strstr (started, "Obey ") + 5);
+    *strchr (obey, '"') = 0;
+    /* (written with OS_File 10, as the file for Reel is: the fake keeps it) */
+    CHECK (!strcmp (saved_path, obey) && strstr (obey, ".TubeSearchJoin"), "the Obey file beside Reel's, in the scrap directory");
+    snprintf (text, sizeof text, "%s", saved_data ? saved_data : "");
+    (void) n;
+    CHECK (strstr (text, "\nffmpeg -progress pipe:1 -nostats -nostdin") && strstr (text, v) && strstr (text, a) && strstr (text, "-i file:") && strstr (text, "-c copy -bsf:a aac_adtstoasc -f mp4")
+           && strstr (text, "Echo TubeSearch-rc <Sys$ReturnCode>"), "the Obey file: ffmpeg joining them, then its return code");
+    CHECK (strstr (text, "-f mp4 file:") && strstr (text, "saved_mp4_t\n") && !strstr (text, "faststart"),
+           "ffmpeg writes <name>_t (in one pass: no faststart)");
+    /* the TaskWindow: Ego, the output, then Morio; ffmpeg made <name>_t */
+    {
+      char t[620];
+      snprintf (t, sizeof t, "%s_t", out);
+      if ((f = fopen (t, "wb")))
+        {
+          fwrite (MINI_MP4, 1, sizeof MINI_MP4 - 1, f);
+          fclose (f);
+        }
+      CHECK (!access (out, F_OK), "(the old file of that name still there meanwhile)");
+    }
+    memset (msg, 0, sizeof msg);
+    msg[1] = 55; msg[4] = 0x808C2; msg[5] = 0x54535631;
+    ui_event (17, msg);
+    {
+      /* ffmpeg's -progress lines (split across messages) move the bar; they aren't kept as output */
+      const char *p1 = "frame=1\nout_time_ms=", *p2 = "60000000\nprogress=continue\n";   /* a minute in */
+      const int *bar = &wins[5].block[22 + 8 * 2], *back = &wins[5].block[22 + 8 * 1];
+      msg[4] = 0x808C1;
+      msg[5] = (int) strlen (p1);
+      memcpy (&msg[6], p1, strlen (p1));
+      ui_event (17, msg);
+      msg[5] = (int) strlen (p2);
+      memcpy (&msg[6], p2, strlen (p2));
+      ui_event (17, msg);
+      CHECK (bar[2] - bar[0] > (back[2] - back[0] - 8) * 90 / 100 && strstr ((const char *) wins[5].block[22 + 8 * 3 + 5], "%"),
+             "ffmpeg's progress moves the bar past 90%");
+    }
+    {
+      /* what ffmpeg 5.1's -progress really prints, many times over (as on
+         the Pi: "stream_0_0_q=-1.0" was once taken for an error, and the
+         rc lost behind it) */
+      static const char block[] = "frame=0\nfps=0.00\nstream_0_0_q=-1.0\nbitrate=N/A\ntotal_size=48\n"
+                                  "out_time_us=0\nout_time_ms=0\nout_time=00:00:00.000000\ndup_frames=0\n"
+                                  "drop_frames=0\nspeed=N/A\nprogress=continue\n";
+      msg[4] = 0x808C1;
+      for (int k = 0; k < 20; k++)
+        for (size_t at = 0; at < sizeof block - 1; at += 100)
+          {
+            size_t n = sizeof block - 1 - at < 100 ? sizeof block - 1 - at : 100;
+            msg[5] = (int) n;
+            memcpy (&msg[6], block + at, n);
+            ui_event (17, msg);
+          }
+    }
+    msg[4] = 0x808C1; msg[5] = 16;
+    memcpy (&msg[6], "TubeSearch-rc 0\n", 16);
+    ui_event (17, msg);
+    msg[4] = 0x808C3;
+    ui_event (17, msg);
+    CHECK (strstr (status (), "Saved ") && strstr (status (), "saved_mp4"), "Saved, said so");
+    CHECK (strstr (typed_path, "saved_mp4_t") && typed_as == 0xBF4, "typed as MP4");
+    CHECK (!wins[5].open, "the Saving window closes when it's saved");
+    text[0] = 0;
+    if ((f = fopen (out, "rb")))
+      {
+        text[fread (text, 1, sizeof text - 1, f)] = 0;
+        fclose (f);
+      }
+    CHECK (access (v, F_OK) && access (a, F_OK) && !memcmp (text, MINI_MP4, sizeof MINI_MP4 - 1),
+           "the pieces deleted; the MP4 took the name (over the old file)");
+    click_tile (0, 100, 100, 2);
+    m = (const int *) last_menu;
+    CHECK (m && !strcmp ((const char *) m[7 + 3 * 6 + 3], "Save video..."), "and Save video... again");
+    menu_open_none ();
+    /* rc 0, but an MP4 ffmpeg didn't finish (no moov): not taken */
+    {
+      char o5[600], t5[620];
+      snprintf (o5, sizeof o5, "%s/nomoov_mp4", scrap);
+      snprintf ((char *) box[22 + 8 + 5], 256, "%.250s", o5);
+      report[0] = 0;
+      {
+        int c[5] = { 0, 0, 4, 4, 2 };
+        ui_event (6, c);
+      }
+      pump ();
+      snprintf (t5, sizeof t5, "%s_t", o5);
+      if ((f = fopen (t5, "wb")))
+        {
+          fwrite ("\0\0\0\x10" "ftypisom\0\0\0\0" "\0\0\x10\0" "mdat", 1, 24, f);   /* mdat cut short */
+          fclose (f);
+        }
+      memset (msg, 0, sizeof msg);
+      msg[1] = 59; msg[4] = 0x808C2; msg[5] = 0x54535631;
+      ui_event (17, msg);
+      msg[4] = 0x808C1; msg[5] = 16;
+      memcpy (&msg[6], "TubeSearch-rc 0\n", 16);
+      ui_event (17, msg);
+      msg[4] = 0x808C3;
+      ui_event (17, msg);
+      CHECK (strstr (report, "isn't right") && strstr (report, "isn't a whole MP4") && access (o5, F_OK) && access (t5, F_OK),
+             "rc 0 but an MP4 cut short: not taken, said why, nothing left");
+    }
+    /* ffmpeg failing: said so (its words), nothing left behind */
+    {
+      char out2[600];
+      snprintf (out2, sizeof out2, "%s/fails_mp4", scrap);
+      if ((f = fopen (out2, "wb")))
+        {
+          fputs ("keep me", f);
+          fclose (f);
+        }
+      snprintf ((char *) box[22 + 8 + 5], 256, "%.250s", out2);
+      report[0] = 0;
+      {
+        int c[5] = { 0, 0, 4 /* Select */, 4, 2 };
+        ui_event (6, c);
+      }
+      pump ();
+      memset (msg, 0, sizeof msg);
+      msg[1] = 56; msg[4] = 0x808C2; msg[5] = 0x54535631;
+      ui_event (17, msg);
+      msg[4] = 0x808C1; msg[5] = 45;
+      memcpy (&msg[6], "Could not write header for output\nTubeSearch-rc 1\n", 45);
+      msg[5] = (int) strlen ("Could not write header for output\nTubeSearch-rc 1\n");
+      memcpy (&msg[6], "Could not write header for output\nTubeSearch-rc 1\n", (size_t) msg[5]);
+      ui_event (17, msg);
+      msg[4] = 0x808C3;
+      ui_event (17, msg);
+      snprintf (v, sizeof v, "%s_v", out2);
+      CHECK (strstr (report, "couldn't join") && strstr (report, "Could not write header"), "ffmpeg failing: said so, in its words");
+      CHECK (access (v, F_OK) && !access (out2, F_OK), "and nothing left behind (the file already there kept)");
+      unlink (out2);
+    }
+    /* Stop saving, while the pieces are being fetched */
+    {
+      char out3[600];
+      int stop[4] = { 3, -1, -1, -1 };
+      snprintf (out3, sizeof out3, "%s/stopped_mp4", scrap);
+      snprintf ((char *) box[22 + 8 + 5], 256, "%.250s", out3);
+      {
+        int c[5] = { 0, 0, 4 /* Select */, 4, 2 };
+        ui_event (6, c);
+      }
+      for (int i = 0; i < 30 && !strstr (status (), "pieces"); i++)
+        ui_event (0, msg);
+      click_tile (0, 100, 100, 2);
+      ui_event (9, stop);
+      pump ();
+      snprintf (v, sizeof v, "%s_v", out3);
+      CHECK (strstr (status (), "Stopped saving") && access (v, F_OK) && access (out3, F_OK), "Stop saving: stopped, nothing left");
+    }
+    /* stopping the join: Morite to the TaskWindow */
+    {
+      char out4[600];
+      int stop[4] = { 3, -1, -1, -1 };
+      snprintf (out4, sizeof out4, "%s/stopjoin_mp4", scrap);
+      snprintf ((char *) box[22 + 8 + 5], 256, "%.250s", out4);
+      {
+        int c[5] = { 0, 0, 4 /* Select */, 4, 2 };
+        ui_event (6, c);
+      }
+      pump ();
+      memset (msg, 0, sizeof msg);
+      msg[1] = 57; msg[4] = 0x808C2; msg[5] = 0x54535631;
+      ui_event (17, msg);
+      morites = 0;
+      {
+        int c[5] = { 0, 0, 4, 5, 4 };             /* the Saving window's Stop */
+        ui_event (6, c);
+      }
+      (void) stop;
+      CHECK (morites == 1, "Stop (the Saving window's) while joining: Morite to the TaskWindow");
+      ui_event (17, msg);                       /* (a second Ego: nothing more) */
+      msg[4] = 0x808C3;
+      ui_event (17, msg);
+      snprintf (v, sizeof v, "%s_v", out4);
+      CHECK (strstr (status (), "Stopped saving") && access (v, F_OK), "then stopped, nothing left");
+    }
+  }
+
+  /* Stop before the TaskWindow has said who it is: Morite once it does */
+  {
+    char o[600], v[620];
+    int msg[64], stop[4] = { 3, -1, -1, -1 };
+    const int *box = wins[4].block;
+    snprintf (o, sizeof o, "%s/early_mp4", scrap);
+    snprintf ((char *) box[22 + 8 + 5], 256, "%.250s", o);
+    {
+      int c[5] = { 0, 0, 4, 4, 2 };
+      ui_event (6, c);
+    }
+    pump ();
+    morites = 0;
+    click_tile (0, 100, 100, 2);
+    ui_event (9, stop);
+    CHECK (morites == 0 && strstr (status (), "stopping"), "Stop before Ego: stopping...");
+    memset (msg, 0, sizeof msg);
+    msg[1] = 58; msg[4] = 0x808C2; msg[5] = 0x54535631;
+    ui_event (17, msg);
+    CHECK (morites == 1, "then Morite as soon as it says who it is");
+    msg[4] = 0x400C3;                           /* TaskCloseDown (as from the Task Manager) */
+    ui_event (17, msg);
+    snprintf (v, sizeof v, "%s_v", o);
+    CHECK (strstr (status (), "Stopped saving") && access (v, F_OK), "and its end (TaskCloseDown) finishes it");
+  }
+
+  /* a picture that fails once is fetched again; a 320x180 one that isn't
+     there (404) is fetched at 480x360 instead */
+  {
+    thumb *t1 = thumb_get ("https://i.ytimg.com/vi/flaky/mqdefault.jpg", 320, 180);
+    thumb *t2 = thumb_get ("https://i.ytimg.com/vi/gone/mqdefault.jpg", 320, 180);
+    pump ();
+    CHECK (thumb_ready (t1) == 1 && flaky_requests == 2, "a picture that failed once: fetched again, shown");
+    CHECK (thumb_ready (t2) == 1 && gone_mq == 1 && gone_hq == 1, "no mqdefault: hqdefault instead");
   }
 
   /* Reel not known: said so, nothing started */

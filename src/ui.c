@@ -22,6 +22,7 @@
 #include "thumbs.h"
 #include "proxy.h"
 #include "subs.h"
+#include "save.h"
 #include <time.h>
 #include "transport.h"
 #include "ejsupd.h"
@@ -38,12 +39,19 @@
 
 /* Wimp_Poll reasons and messages */
 enum { Null_Reason = 0, Redraw_Window_Request = 1, Open_Window_Request = 2, Close_Window_Request = 3,
-       Mouse_Click = 6, Key_Pressed = 8, Menu_Selection = 9, User_Message = 17,
-       User_Message_Recorded = 18 };
+       Mouse_Click = 6, User_Drag_Box = 7, Key_Pressed = 8, Menu_Selection = 9, User_Message = 17,
+       User_Message_Recorded = 18, User_Message_Acknowledge = 19 };
 enum { Button_Adjust = 1, Button_Menu = 2, Button_Select = 4 };
 #define Message_Quit 0
 #define Message_DataLoad 3
 #define Message_DataLoadAck 4
+#define Message_DataSave 1
+#define Message_PreQuit 8
+#define Message_DataSaveAck 2
+#define Message_TaskWindow_Output 0x808C1
+#define Message_TaskWindow_Ego 0x808C2
+#define Message_TaskWindow_Morio 0x808C3
+#define Message_TaskWindow_Morite 0x808C4
 #define Message_ModeChange 0x400C1
 #define Message_FontChanged 0x400CF
 
@@ -1184,6 +1192,633 @@ static void play (const yt_item *it)
   play_op = op;
 }
 
+/* ---- saving a video --------------------------------------------------------
+
+   Save video... (the menu over a video) leads to a save box: a file icon to
+   drag to a Filer window, or a full name typed in. The streams are found
+   as for playing (the Quality, Frame rate and Sound choices), fetched by
+   save.c into <name>_v and <name>_a beside the MP4, then joined into it by
+   !FFmpeg's ffmpeg (no re-encoding), run in a TaskWindow that reports to
+   this task (-task/-txt: Ego, Output, Morio). One at a time; the status
+   line follows it, and the menu's item becomes Stop saving. */
+
+enum { SB_FILE, SB_NAME, SB_SAVE, SB_NOTE, SB_ICONS };
+#define SAVE_TXT 0x54535631           /* the TaskWindow's -txt (ours) */
+
+static int savebox = -1;
+static char sb_name[256], sb_sprite[16] = "file_xxx", sb_note[] = "An MP4, joined by ffmpeg";
+static struct {
+  int state;                  /* 0 idle, 1 finding the streams, 2 fetching, 3 joining */
+  char id[16];
+  char title[200];            /* the desktop's alphabet */
+  char box_id[16], box_title[200];   /* the video the save box is for */
+  int box_seconds;
+  char path[256], vfile[264], afile[264], tfile[264];   /* the MP4; the picture, sound; ffmpeg's */
+  char obey[440];
+  int has_audio;
+  api_op *op;
+  save_job *job;
+  int child;                  /* the TaskWindow's task (from Ego), 0 not known yet */
+  int stopping;
+  char output[600];           /* what the TaskWindow said (the end of it), but ffmpeg's progress */
+  char line[200];             /* a line of it not finished yet */
+  int rc, have_rc;            /* ffmpeg's return code (the Obey file echoes it) */
+  int seconds;                /* the video's length (from its tile), 0 not known */
+  int fetch_pc;               /* how far, 0-1000: to 900 fetching, then joining */
+  int my_ref;                 /* our Message_DataSave */
+} sv;
+
+static int mp4_type (void)
+{
+  static int type = -1;
+  if (type == -1)
+    {
+      int t = 0;
+      /* MimeMap_Translate: 3 an extension -> 0 a filetype */
+      if (_swix (0x50B00, _INR (0, 2) | _OUT (3), 3, "mp4", 0, &t) || t <= 0 || t > 0xFFF)
+        t = 0xFFD;
+      type = t;
+    }
+  return type;
+}
+
+static void savebox_set (int i)
+{
+  int b[4] = { savebox, i, 0, 0 };
+  if (savebox != -1)
+    _swix (Wimp_SetIconState, _IN (1), b);
+}
+
+static int create_savebox (void)
+{
+  static char title[] = "Save video", save_text[] = "Save", save_valid[] = "R6,3", name_valid[] = "Pptr_write;A~ ";
+  int b[22 + 8 * SB_ICONS];
+  int w = 640, h = 236;
+  {
+    char spr[16];
+    int t = mp4_type ();
+    snprintf (spr, sizeof spr, "file_%03x", t);
+    /* the Wimp's sprite for MP4 files, if there is one (else the unknown file's) */
+    if (!_swix (Wimp_SpriteOp, _IN (0) | _IN (2), 40, spr))
+      snprintf (sb_sprite, sizeof sb_sprite, "%s", spr);
+  }
+  memset (b, 0, sizeof b);
+  b[2] = w; b[3] = h;
+  b[6] = -1;
+  b[7] = (int) (0x80000000u | (1u << 26) | 2u | (1u << 4));
+  ((unsigned char *) b)[32] = 7;  ((unsigned char *) b)[33] = 2;
+  ((unsigned char *) b)[34] = 7;  ((unsigned char *) b)[35] = 1;
+  ((unsigned char *) b)[36] = 3;  ((unsigned char *) b)[37] = 1;
+  ((unsigned char *) b)[38] = 12;
+  b[10] = 0; b[11] = -h; b[12] = w; b[13] = 0;
+  b[14] = 0x13D;
+  b[16] = 1;
+  b[18] = (int) title; b[19] = -1; b[20] = sizeof title;
+  b[21] = SB_ICONS;
+  /* the file icon (click or drag: button type 6), the name, Save, a note */
+  icon (&b[22 + 8 * SB_FILE], w / 2 - 50, -116, w / 2 + 50, -16, 0x0700611A, sb_sprite, (char *) 1, sizeof sb_sprite);
+  b[22 + 8 * SB_FILE + 5] = (int) sb_sprite;
+  b[22 + 8 * SB_FILE + 6] = 1;               /* the Wimp's sprites */
+  icon (&b[22 + 8 * SB_NAME], 16, -180, w - 160, -128, 0x0700F13D, sb_name, name_valid, sizeof sb_name);
+  icon (&b[22 + 8 * SB_SAVE], w - 144, -184, w - 16, -124, 0xC700313D, save_text, save_valid, sizeof save_text);
+  icon (&b[22 + 8 * SB_NOTE], 16, -228, w - 16, -192, 0x07000119, sb_note, "", sizeof sb_note);
+  return fail (_swix (Wimp_CreateWindow, _IN (1) | _OUT (0), b, &savebox));
+}
+
+static int duration_seconds (const char *d);
+
+/* The save box, for the video it.  */
+static void savebox_for (const yt_item *it)
+{
+  char leaf[64];
+  snprintf (sv.box_id, sizeof sv.box_id, "%.12s", it->id);
+  snprintf (sv.box_title, sizeof sv.box_title, "%s", it->title ? it->title : it->id);
+  sv.box_seconds = duration_seconds (it->duration);
+  /* (the tile's title is already the desktop's: no conversion needed) */
+  {
+    char *u = text_to_utf8 (sv.box_title);
+    save_leaf_name (u ? u : sv.box_title, leaf, sizeof leaf, 40);
+    free (u);
+  }
+  snprintf (sb_name, sizeof sb_name, "%s/mp4", leaf);
+  savebox_set (SB_NAME);
+}
+
+/* ---- the progress window: the video's title, a bar, what's happening, Stop */
+
+enum { PW_TITLE, PW_BACK, PW_BAR, PW_TEXT, PW_STOP, PW_ICONS };
+#define PW_W 760
+#define BAR_X0 24
+#define BAR_X1 (PW_W - 24)
+static int progwin = -1;
+static char pw_title[120], pw_text[120] = "", pw_stop[] = "Stop";
+
+static int create_progwin (void)
+{
+  static char title[] = "Saving video", stop_valid[] = "R5,3", none[] = "";
+  int b[22 + 8 * PW_ICONS];
+  int h = 220;
+  memset (b, 0, sizeof b);
+  b[2] = PW_W; b[3] = h;
+  b[6] = -1;
+  b[7] = (int) (0x80000000u | (1u << 24) | (1u << 26) | 2u | (1u << 4));   /* title, close icon; movable */
+  ((unsigned char *) b)[32] = 7;  ((unsigned char *) b)[33] = 2;
+  ((unsigned char *) b)[34] = 7;  ((unsigned char *) b)[35] = 1;
+  ((unsigned char *) b)[36] = 3;  ((unsigned char *) b)[37] = 1;
+  ((unsigned char *) b)[38] = 12;
+  b[10] = 0; b[11] = -h; b[12] = PW_W; b[13] = 0;
+  b[14] = 0x13D;
+  b[16] = 1;
+  b[18] = (int) title; b[19] = -1; b[20] = sizeof title;
+  b[21] = PW_ICONS;
+  icon (&b[22 + 8 * PW_TITLE], 24, -64, PW_W - 24, -16, 0x07000111, pw_title, none, sizeof pw_title);
+  /* the bar: a white box, and the filled part (resized as it goes) */
+  icon (&b[22 + 8 * PW_BACK], BAR_X0, -116, BAR_X1, -72, 0x07000025 | (0u << 28), NULL, NULL, 0);
+  b[22 + 8 * PW_BACK + 5] = b[22 + 8 * PW_BACK + 6] = b[22 + 8 * PW_BACK + 7] = 0;
+  icon (&b[22 + 8 * PW_BAR], BAR_X0 + 4, -112, BAR_X0 + 4, -76, (int) (0x07000020u | (8u << 28)), NULL, NULL, 0);
+  b[22 + 8 * PW_BAR + 5] = b[22 + 8 * PW_BAR + 6] = b[22 + 8 * PW_BAR + 7] = 0;
+  icon (&b[22 + 8 * PW_TEXT], 24, -172, PW_W - 180, -124, 0x07000111, pw_text, none, sizeof pw_text);
+  icon (&b[22 + 8 * PW_STOP], PW_W - 160, -196, PW_W - 24, -132, 0xC700313D, pw_stop, stop_valid, sizeof pw_stop);
+  return fail (_swix (Wimp_CreateWindow, _IN (1) | _OUT (0), b, &progwin));
+}
+
+/* pm: how far, 0-1000 */
+static void progwin_set (int pm, const char *fmt, ...) __attribute__ ((format (printf, 2, 3)));
+static void progwin_set (int pm, const char *fmt, ...)
+{
+  int st[4] = { progwin, PW_TEXT, 0, 0 };
+  int x1;
+  va_list ap;
+  if (progwin == -1)
+    return;
+  va_start (ap, fmt);
+  vsnprintf (pw_text, sizeof pw_text, fmt, ap);
+  va_end (ap);
+  _swix (Wimp_SetIconState, _IN (1), st);
+  if (pm < 0)
+    pm = 0;
+  if (pm > 1000)
+    pm = 1000;
+  x1 = BAR_X0 + 4 + (BAR_X1 - BAR_X0 - 8) * pm / 1000;
+  _swix (Wimp_ResizeIcon, _INR (0, 5), progwin, PW_BAR, BAR_X0 + 4, -112, x1, -76);
+  _swix (Wimp_ForceRedraw, _INR (0, 4), progwin, BAR_X0, -116, BAR_X1, -72);
+}
+
+static void progwin_open (void)
+{
+  int st[9], ptr[5];
+  if (progwin == -1)
+    return;
+  {
+    int ic[4] = { progwin, PW_TITLE, 0, 0 };
+    snprintf (pw_title, sizeof pw_title, "%.110s", sv.title);
+    _swix (Wimp_SetIconState, _IN (1), ic);
+  }
+  st[0] = progwin;
+  if (_swix (Wimp_GetWindowState, _IN (1), st))
+    return;
+  if (!(st[8] & (1 << 16)) && !_swix (Wimp_GetPointerInfo, _IN (1), ptr))
+    {
+      /* (not open: near the pointer) */
+      st[1] = ptr[0] - PW_W / 2;
+      st[2] = ptr[1] - 110;
+      st[3] = st[1] + PW_W;
+      st[4] = ptr[1] + 110;
+      st[5] = st[6] = 0;
+    }
+  st[7] = -1;
+  _swix (Wimp_OpenWindow, _IN (1), st);
+}
+
+static void progwin_close (void)
+{
+  int b[1] = { progwin };
+  if (progwin != -1)
+    _swix (Wimp_CloseWindow, _IN (1), b);
+}
+
+/* "1:02:03" -> 3723 (0 if it isn't a time) */
+static int duration_seconds (const char *d)
+{
+  int s = 0, n = 0;
+  for (; d && *d; d++)
+    if (*d >= '0' && *d <= '9')
+      n = n * 10 + (*d - '0');
+    else if (*d == ':')
+      s = (s + n) * 60, n = 0;
+    else
+      return 0;
+  return s + n;
+}
+
+static void save_delete (const char *path)
+{
+  if (path[0])
+    _swix (OS_File, _INR (0, 1), 6, path);
+}
+
+/* Back to idle, deleting what saving made (never the MP4's name itself:
+   ffmpeg writes <name>_t, renamed to it only once it's complete, so a file
+   there already is kept until then) */
+static void save_reset (void)
+{
+  save_delete (sv.tfile);
+  save_delete (sv.vfile);
+  save_delete (sv.afile);
+  sv.state = 0;
+  progwin_close ();
+  sv.op = NULL;
+  sv.job = NULL;
+  sv.child = 0;
+  sv.stopping = 0;
+}
+
+static void save_failed (const char *why)
+{
+  char m[400];
+  snprintf (m, sizeof m, "%.150s wasn't saved: %.200s", sv.title, why);
+  save_reset ();
+  set_status ("%s", m);
+  ui_report (m);
+}
+
+static void save_progress (int parts, int total, long kbytes, void *ctx)
+{
+  (void) ctx;
+  if (total)
+    {
+      set_status ("Saving %s: %d of %d pieces, %ld MB", sv.title, parts, total, kbytes >> 10);
+      sv.fetch_pc = 900 * parts / total;
+      progwin_set (sv.fetch_pc, "%d of %d pieces, %ld MB", parts, total, kbytes >> 10);
+    }
+}
+
+/* the command line ffmpeg gets (RISC OS's limit is 1024 characters) */
+#define JOIN_MAX 1000
+
+/* Writes the Obey file (with OS_File, as the file for Reel is written:
+   RISC OS names, <Wimp$ScrapDir> and all). NULL, or the error. */
+static const _kernel_oserror *write_obey (const char *path, const char *text)
+{
+  return _swix (OS_File, _INR (0, 2) | _INR (4, 5), 10, path, 0xFEB, text, text + strlen (text));
+}
+
+static void join_start (void)
+{
+  char args[1600], cmd[760], text[1800];
+  const _kernel_oserror *e;
+  if (save_join_args (args, sizeof args, sv.vfile, sv.has_audio ? sv.afile : NULL, sv.tfile)
+      || strlen (args) + 7 > JOIN_MAX)
+    {
+      save_failed ("the join couldn't be set up");
+      return;
+    }
+  /* ffmpeg (!FFmpeg's alias, or Run$Path's), then its return code for us to read */
+  snprintf (text, sizeof text,
+            "| TubeSearch: joining a saved video's picture and sound\nffmpeg -progress pipe:1 -nostats %s\n"
+            "Echo TubeSearch-rc <Sys$ReturnCode>\n", args);
+  if ((e = write_obey (sv.obey, text)))
+    {
+      char why[400];
+      snprintf (why, sizeof why, "%.200s couldn't be written (%.150s)", sv.obey, e->errmess);
+      save_failed (why);
+      return;
+    }
+  snprintf (cmd, sizeof cmd, "TaskWindow \"Obey %s\" -wimpslot 45056K -name \"TubeSearch save\" -task &%X -txt &%X -quit",
+            sv.obey, (unsigned) task, (unsigned) SAVE_TXT);
+  sv.state = 3;
+  sv.child = 0;
+  sv.output[0] = sv.line[0] = 0;
+  sv.have_rc = 0;
+  set_status ("Saving %s: joining the picture and sound...", sv.title);
+  progwin_set (900, "Joining the picture and sound...");
+  if (start_task (cmd, NULL))
+    save_failed ("the TaskWindow couldn't be started");
+}
+
+static void fetch_done (int ok, const char *err, void *ctx)
+{
+  (void) ctx;
+  sv.job = NULL;
+  if (!ok)
+    {
+      save_failed (err);
+      return;
+    }
+  join_start ();
+}
+
+static void save_play_done (yt_play *pl, const char *err, void *ctx)
+{
+  char e[300];
+  (void) ctx;
+  sv.op = NULL;
+  if (sv.state != 1)
+    return;                                   /* (stopped meanwhile) */
+  if (!pl)
+    {
+      save_failed (err);
+      return;
+    }
+  sv.has_audio = pl->audio_url != NULL;
+  sv.state = 2;
+  set_status ("Saving %s: %dp%s", sv.title, pl->quality, pl->audio_url ? " and its sound" : "");
+  if (!(sv.job = save_start (pl, sv.vfile, sv.afile, save_progress, fetch_done, NULL, e, sizeof e)))
+    save_failed (e);
+}
+
+/* Starts saving the save box's video as path (a full name). */
+static void save_to (const char *path)
+{
+  if (sv.state)
+    {
+      ui_report ("A video is being saved already: wait for it, or choose Stop saving on the menu.");
+      return;
+    }
+  {
+    /* an ffmpeg command: !FFmpeg's alias, or another port's on Run$Path */
+    int type = 0;
+    if (!getenv ("Alias$ffmpeg") && (_swix (OS_File, _INR (0, 1) | _OUT (0), 17, "Run:ffmpeg", &type) || type != 1))
+      {
+        ui_report ("Saving needs ffmpeg to join the picture and sound: open the directory that has !FFmpeg in it "
+                   "(so the Filer sees it), then save again.");
+        return;
+      }
+  }
+  {
+    /* where the Obey file for the join goes (beside the files for Reel),
+       checked now (not after the whole download); and the join's command
+       line must fit */
+    const char *scrap = getenv ("Wimp$ScrapDir");
+    const _kernel_oserror *e;
+    char args[1600];
+    snprintf (sv.obey, sizeof sv.obey, "%s.TubeSearchJoin", scrap && *scrap ? scrap : "<Wimp$ScrapDir>");
+    if ((e = write_obey (sv.obey, "| TubeSearch: the join comes here\n")))
+      {
+        char m[512];
+        snprintf (m, sizeof m, "Saving needs the scrap directory to work in, and %.200s couldn't be written (%.150s).",
+                  sv.obey, e->errmess);
+        ui_report (m);
+        return;
+      }
+    if (strlen (path) > 240 || save_join_args (args, sizeof args, path, path, path) || strlen (args) + 21 > JOIN_MAX)
+      {
+        ui_report ("That name is too long to save to: choose a shorter one, or a directory nearer the top of the disc.");
+        return;
+      }
+  }
+  snprintf (sv.path, sizeof sv.path, "%s", path);
+  snprintf (sv.id, sizeof sv.id, "%s", sv.box_id);
+  snprintf (sv.title, sizeof sv.title, "%s", sv.box_title);
+  sv.seconds = sv.box_seconds;
+  sv.fetch_pc = 0;
+  snprintf (sv.vfile, sizeof sv.vfile, "%s_v", sv.path);
+  snprintf (sv.afile, sizeof sv.afile, "%s_a", sv.path);
+  snprintf (sv.tfile, sizeof sv.tfile, "%s_t", sv.path);
+  sv.state = 1;
+  check_proxy ();
+  set_status ("Saving %s: finding the streams...", sv.title);
+  _swix (Wimp_CreateMenu, _IN (1), -1);       /* (the save box is a menu) */
+  progwin_open ();
+  progwin_set (0, "Finding the streams...");
+  if (!(sv.op = api_play (sv.id, quality, save_play_done, NULL)) && sv.state == 1)
+    save_failed ("out of memory");
+}
+
+/* Save (or Return) with a full name typed */
+static void save_typed (void)
+{
+  if (!strchr (sb_name, '.') && !strchr (sb_name, ':'))
+    {
+      ui_report ("To save, drag the file icon to a directory, or type the full name (such as "
+                 "SDFS::Pi.$.Videos.name/mp4).");
+      return;
+    }
+  save_to (sb_name);
+}
+
+static void save_stop (void)
+{
+  if (sv.state == 1)
+    api_cancel (sv.op);
+  if (sv.state == 2)
+    save_cancel (sv.job);
+  if (sv.state == 3)
+    {
+      /* ask the TaskWindow to end ffmpeg; Morio finishes it. Before it has
+         said who it is (Ego), that's done when it does; asked twice with no
+         Ego yet, it's given up on */
+      int m[6] = { 20, 0, 0, 0, Message_TaskWindow_Morite, 0 };
+      if (sv.child)
+        _swix (Wimp_SendMessage, _INR (0, 2), 17, m, sv.child);
+      else if (sv.stopping)
+        {
+          set_status ("Stopped saving %s", sv.title);
+          save_reset ();
+          return;
+        }
+      sv.stopping = 1;
+      set_status ("Saving %s: stopping...", sv.title);
+      return;
+    }
+  if (sv.state)
+    {
+      set_status ("Stopped saving %s", sv.title);
+      save_reset ();
+    }
+}
+
+/* Dragging the file icon: DragASprite (or a box) until the button's let go */
+static void save_drag_start (void)
+{
+  int st[9], ic[10];
+  st[0] = savebox;
+  ic[0] = savebox;
+  ic[1] = SB_FILE;
+  if (_swix (Wimp_GetWindowState, _IN (1), st) || _swix (Wimp_GetIconState, _IN (1), ic))
+    return;
+  {
+    int box[4] = { st[1] + ic[2], st[4] + ic[3], st[1] + ic[4], st[4] + ic[5] };
+    /* DragASprite_Start: centred, bounded by the screen, from the Wimp's sprites */
+    if (_swix (0x42400, _INR (0, 3), 0x85, 1, sb_sprite, box))
+      {
+        int d[10] = { savebox, 5, box[0], box[1], box[2], box[3], 0, 0, 0x7FFFFFFF, 0x7FFFFFFF };
+        d[6] = -0x7FFFFFFF;
+        d[7] = -0x7FFFFFFF;
+        _swix (Wimp_DragBox, _IN (1), d);
+      }
+  }
+  sv.my_ref = 0;
+}
+
+static void save_drag_end (void)
+{
+  int ptr[5], m[64];
+  const char *leaf = strrchr (sb_name, '.');
+  leaf = leaf ? leaf + 1 : sb_name;
+  _swix (0x42401, 0);                          /* DragASprite_Stop */
+  if (_swix (Wimp_GetPointerInfo, _IN (1), ptr) || ptr[3] == savebox)
+    return;
+  /* Message_DataSave to where it was dropped: the Filer answers with the full name */
+  memset (m, 0, sizeof m);
+  m[4] = Message_DataSave;
+  m[5] = ptr[3];
+  m[6] = ptr[4];
+  m[7] = ptr[0];
+  m[8] = ptr[1];
+  m[9] = 1 << 20;                              /* (the size: not known yet) */
+  m[10] = mp4_type ();
+  snprintf ((char *) &m[11], 200, "%.190s", leaf);
+  m[0] = (int) ((44 + strlen ((char *) &m[11]) + 1 + 3) & ~3u);
+  if (!_swix (Wimp_SendMessage, _INR (0, 3), 17, m, ptr[3], ptr[4]))
+    sv.my_ref = m[2];
+}
+
+static void click_savebox (const int *b)
+{
+  if (b[4] == SB_FILE && (b[2] == 64 || b[2] == 16))
+    save_drag_start ();
+  else if (b[4] == SB_SAVE && (b[2] == Button_Select || b[2] == Button_Adjust))
+    save_typed ();
+}
+
+/* A line from the TaskWindow: ffmpeg's progress (key=value: how far it
+   has got, for the bar), or anything else (kept: an error, the rc) */
+static void save_output_line (const char *l)
+{
+  const char *e = l;
+  /* our own line: ffmpeg's return code */
+  if (!strncmp (l, "TubeSearch-rc ", 14))
+    {
+      sv.rc = atoi (l + 14);
+      sv.have_rc = 1;
+      return;
+    }
+  /* ffmpeg's -progress lines: key=value, the key lower case letters,
+     digits and _ ("stream_0_0_q=-1.0", "out_time_us=...") */
+  while ((*e >= 'a' && *e <= 'z') || (*e >= '0' && *e <= '9') || *e == '_')
+    e++;
+  if (*e == '=' && e > l && *l >= 'a' && *l <= 'z')
+    {
+      /* out_time_ms is microseconds too (FFmpeg's old name for it) */
+      if (sv.seconds > 0 && (!strncmp (l, "out_time_us=", 12) || !strncmp (l, "out_time_ms=", 12)))
+        {
+          long long us = atoll (e + 1);
+          int pc = (int) (us / 10000 / sv.seconds);        /* (the join: the last 10% of the bar) */
+          if (pc > 100)
+            pc = 100;
+          progwin_set (900 + pc, "Joining the picture and sound: %d%%", pc);
+        }
+      return;
+    }
+  {
+    size_t have = strlen (sv.output), n = strlen (l);
+    if (have + n + 2 > sizeof sv.output)
+      return;                                   /* (the first lines are what matter) */
+    memcpy (sv.output + have, l, n);
+    sv.output[have + n] = '\n';
+    sv.output[have + n + 1] = 0;
+  }
+}
+
+/* The TaskWindow's messages, and the Filer's answer to a drag */
+static void save_message (const int *b)
+{
+  if (b[4] == Message_DataSaveAck && sv.my_ref && b[3] == sv.my_ref)
+    {
+      sv.my_ref = 0;
+      if (b[9] == -1)
+        ui_report ("Drag it to a directory (a Filer window) to save it.");
+      else
+        save_to ((const char *) &b[11]);
+    }
+  else if (b[4] == Message_TaskWindow_Ego && b[5] == SAVE_TXT && sv.state == 3)
+    {
+      sv.child = b[1];
+      if (sv.stopping)
+        {
+          int m[6] = { 20, 0, 0, 0, Message_TaskWindow_Morite, 0 };
+          _swix (Wimp_SendMessage, _INR (0, 2), 17, m, sv.child);
+        }
+    }
+  else if (b[4] == Message_TaskWindow_Output && sv.state == 3 && sv.child && b[1] == sv.child)
+    {
+      const char *t = (const char *) &b[6];
+      for (int i = 0; i < b[5] && i < 232; i++)
+        {
+          size_t l = strlen (sv.line);
+          if (t[i] != '\n' && t[i] != '\r')
+            {
+              if (l + 1 < sizeof sv.line)
+                sv.line[l] = t[i], sv.line[l + 1] = 0;
+              continue;
+            }
+          if (l)
+            save_output_line (sv.line);
+          sv.line[0] = 0;
+        }
+    }
+  else if ((b[4] == Message_TaskWindow_Morio || b[4] == Message_TaskCloseDown) && sv.state == 3 && sv.child
+           && b[1] == sv.child)
+    {
+      /* (TaskCloseDown too: a TaskWindow killed from the Task Manager) */
+      int size = 0, type = 0;
+      if (sv.line[0])
+        save_output_line (sv.line);               /* (a last line with no newline) */
+      sv.line[0] = 0;
+      if (sv.stopping)
+        {
+          set_status ("Stopped saving %s", sv.title);
+          save_reset ();
+          return;
+        }
+      if (!sv.have_rc || sv.rc != 0 || _swix (OS_File, _INR (0, 1) | _OUT (0) | _OUT (4), 17, sv.tfile, &type, &size)
+          || type != 1 || size <= 0)
+        {
+          /* the first thing ffmpeg (or the Obey file) said */
+          char why[300], *nl;
+          const char *o = sv.output;
+          while (*o == '\n' || *o == '\r' || *o == ' ')
+            o++;
+          if (!*o && sv.have_rc && sv.rc)
+            snprintf (why, sizeof why, "ffmpeg couldn't join the picture and sound (it ended with %d)", sv.rc);
+          else
+            snprintf (why, sizeof why, "ffmpeg couldn't join the picture and sound%s%.200s", *o ? ": " : "", o);
+          if ((nl = strpbrk (why, "\r\n")))
+            *nl = 0;
+          save_failed (why);
+          return;
+        }
+      {
+        /* a whole MP4? (ffmpeg's index written; a join cut short has none) */
+        char why[300], bad[200];
+        if (save_check_mp4 (sv.tfile, bad, sizeof bad))
+          {
+            snprintf (why, sizeof why, "ffmpeg's MP4 isn't right: %.200s", bad);
+            save_failed (why);
+            return;
+          }
+      }
+      /* complete: it takes the name (over a file there already) */
+      _swix (OS_File, _INR (0, 2), 18, sv.tfile, mp4_type ());
+      save_delete (sv.path);
+      if (_swix (OS_FSControl, _INR (0, 2), 25, sv.tfile, sv.path))
+        {
+          char why[400];
+          snprintf (why, sizeof why, "it couldn't be renamed from %.240s", sv.tfile);
+          sv.tfile[0] = 0;                        /* (kept: it's complete) */
+          save_failed (why);
+          return;
+        }
+      save_delete (sv.vfile);
+      save_delete (sv.afile);
+      set_status ("Saved %s (%d MB)", sv.path, size >> 20);
+      sv.state = 0;
+      sv.child = 0;
+      progwin_close ();
+    }
+}
+
 /* ---- menus -------------------------------------------------------------- */
 
 typedef struct { int flags, submenu, icon_flags; int data[3]; } menu_item;
@@ -1440,7 +2075,7 @@ static void open_iconbar_menu (int x)
 
 /* The window menu's Subscribe/Unsubscribe: which channel, and where things are */
 static struct { char id[40]; char name[200]; char thumb[400]; } menu_sub;
-static struct { int sub, back, refresh, quality; } menu_at;
+static struct { int save, sub, back, refresh, quality; } menu_at;
 
 static void sub_choice (const char *id, const char *name, const char *thumb)
 {
@@ -1488,6 +2123,7 @@ static void open_tile_menu (int i, int x, int y)
   build_fps_menu ();
   build_sound_menu ();
   menu_tile = i;
+  menu_at.save = -1;
   if (p && i >= 0 && i < p->list.n)
     {
       it = &p->list.items[i];
@@ -1500,6 +2136,18 @@ static void open_tile_menu (int i, int x, int y)
           menu_add_ind (&tile_menu, n++, tile_menu_channel, sizeof tile_menu_channel, 0);
           if (!it->channel_id[0])
             tile_menu.item[n - 1].icon_flags |= 1 << 22;      /* shaded */
+          menu_at.save = n;
+          if (sv.state)
+            menu_add (&tile_menu, n++, "Stop saving", 0, 0);
+          else
+            {
+              static char save_text[] = "Save video...";
+              savebox_for (it);
+              menu_add_ind (&tile_menu, n++, save_text, sizeof save_text, 0);
+              tile_menu.item[n - 1].submenu = savebox;
+              if (it->duration[0] && !strcmp (it->duration, "LIVE"))
+                tile_menu.item[n - 1].icon_flags |= 1 << 22;  /* (a live stream can't be) */
+            }
           sub_choice (it->channel_id, it->channel, "");
         }
       else
@@ -1608,7 +2256,21 @@ static int menu_selection (const int *sel)
         }
       else if (it && i == 0)
         open_channel (it);
-      if (i == menu_at.sub && i >= 0)
+      if (i == menu_at.save && i >= 0)
+        {
+          if (sv.state)
+            save_stop ();
+          else if (sel[1] < 0)
+            {
+              /* chosen (rather than followed): the save box at the pointer */
+              int ptr[5];
+              if (!_swix (Wimp_GetPointerInfo, _IN (1), ptr))
+                _swix (Wimp_CreateMenu, _INR (1, 3), savebox, ptr[0] - 64, ptr[1] + 64);
+              menu_open = M_NONE;
+              return 0;
+            }
+        }
+      else if (i == menu_at.sub && i >= 0)
         toggle_sub ();
       else if (i == menu_at.back)
         go_back ();
@@ -1734,7 +2396,9 @@ static int create_iconbar_icon (void)
 
 int ui_init (void)
 {
-  static const int messages[] = { Message_DataLoad, Message_ModeChange, Message_FontChanged, Message_TaskCloseDown, 0 };
+  static const int messages[] = { Message_DataLoad, Message_ModeChange, Message_FontChanged, Message_TaskCloseDown,
+                                  Message_DataSaveAck, Message_TaskWindow_Output, Message_TaskWindow_Ego,
+                                  Message_TaskWindow_Morio, Message_PreQuit, 0 };
   char err[200];
   int alphabet = 0;
   const char *dir = getenv ("TubeSearch$Dir");
@@ -1794,7 +2458,8 @@ int ui_init (void)
   http_init (&transport_system);
   thumbs_init (picture_arrived);
   tv_init ();
-  return create_iconbar_icon () || create_main () || create_bar () || create_info ();
+  return create_iconbar_icon () || create_main () || create_bar () || create_info () || create_savebox ()
+         || create_progwin ();
 }
 
 int ui_busy (void)
@@ -1821,7 +2486,9 @@ int ui_event (int reason, int *b)
         _swix (Wimp_OpenWindow, _IN (1), b);
       break;
     case Close_Window_Request:
-      if (b[0] == win)
+      if (b[0] == progwin)
+        progwin_close ();                       /* (saving goes on: the status line follows it) */
+      else if (b[0] == win)
         {
           _swix (Wimp_CloseWindow, _IN (1), b);
           win_open = 0;
@@ -1839,10 +2506,19 @@ int ui_event (int reason, int *b)
         click_main (b);
       else if (b[3] == bar)
         click_bar (b);
+      else if (savebox != -1 && b[3] == savebox)
+        click_savebox (b);
+      else if (progwin != -1 && b[3] == progwin && b[4] == PW_STOP)
+        save_stop ();
+      break;
+    case User_Drag_Box:
+      save_drag_end ();
       break;
     case Key_Pressed:
       if (b[0] == bar && b[1] == I_FIELD && b[6] == 13)
         search ();
+      else if (savebox != -1 && b[0] == savebox && b[6] == 13)
+        save_typed ();
       else if (b[6] == 0x185)               /* F5: Refresh */
         refresh ();
       else if (b[6] == 0x1B && b[0] == bar)
@@ -1856,8 +2532,17 @@ int ui_event (int reason, int *b)
     case User_Message_Recorded:
       if (b[4] == Message_Quit)
         return 1;
+      if (b[4] == Message_PreQuit && sv.state && reason == User_Message_Recorded)
+        {
+          /* a video being saved: object to quitting (by acknowledging), and say why */
+          b[3] = b[2];
+          _swix (Wimp_SendMessage, _INR (0, 2), User_Message_Acknowledge, b, b[1]);
+          ui_report ("A video is being saved: choose Stop saving on a video's menu first, or wait for it to finish.");
+          break;
+        }
       if (b[4] == Message_TaskCloseDown && helper.running && b[1] == helper.task)
         helper_closed ();
+      save_message (b);
       if (b[4] == Message_DataLoad && (b[5] == win || b[5] == bar || b[5] == -2))
         data_load (b);
       if (b[4] == Message_ModeChange || b[4] == Message_FontChanged)
@@ -1922,6 +2607,15 @@ static void data_load (int *b)
 
 void ui_close (void)
 {
+  /* a save in progress: stopped, its pieces deleted (while joining,
+     ffmpeg is told to stop but its files may be left, open until it does) */
+  if (sv.state == 3 && sv.child)
+    {
+      int m[6] = { 20, 0, 0, 0, Message_TaskWindow_Morite, 0 };
+      _swix (Wimp_SendMessage, _INR (0, 2), 17, m, sv.child);
+    }
+  else if (sv.state)
+    save_stop ();
   while (depth)
     free_page (pages[--depth]);
   api_cancel (play_op);

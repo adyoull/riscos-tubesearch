@@ -36,6 +36,15 @@ if bad: f['yt.solver.core.min.js']='0'*128
 open(d+'/manifest.json','w').write(json.dumps({'version':v,'files':f}))" "$1" "${2:-}" "$W/ejs"
 }
 CLI_TV="$CLI -ejs $W/bundle -state $W/state -work $W/work"
+# Saving: with ffmpeg here, real pieces (H.264 and AAC in MPEG-TS, 2 s
+# each) for the fake stream servers, so the joined MP4 can be checked
+if command -v ffmpeg > /dev/null && command -v ffprobe > /dev/null; then
+  mkdir -p "$W/media/video" "$W/media/audio"
+  ffmpeg -v error -f lavfi -i testsrc=d=6:s=160x90:r=25 -c:v libx264 -g 50 -an -f segment -segment_time 2 \
+    -segment_format mpegts "$W/media/video/%03d.ts" &&
+  ffmpeg -v error -f lavfi -i sine=d=6 -c:a aac -vn -f segment -segment_time 2 \
+    -segment_format mpegts "$W/media/audio/%03d.ts" && export FAKE_MEDIA="$W/media" || echo "(no pieces made: saving checked without joining)"
+fi
 PORT=$((20000 + $$ % 20000))
 python3 -I "$HERE/fake_youtube.py" $PORT "$W/cert.pem" "$W/key.pem" "$FIX" "$W/log" "$W/ejs" > "$W/srv.out" 2>&1 &
 SRV=$!
@@ -189,6 +198,44 @@ check "every request through the proxy as YouTube expects" "python3 -I -c \"
 import json
 bad=[r for r in (json.loads(l) for l in open('$W/log')) if r.get('problems')]
 assert not bad, bad\""
+
+# Saving a video: the HLS pieces, in order, then joined by ffmpeg
+TUBE_NOJOIN=1 "$CLI" save 7PIMiDcwNvc 720 "$W/saved" 2> "$W/err" || { cat "$W/err"; fail=1; }
+check "save: both streams' pieces in order (one root-relative), with the media user agent" "python3 -I -c \"
+import json,os
+M=os.environ.get('FAKE_MEDIA','')
+def pieces(k):
+    if M: return [open(os.path.join(M,k,n),'rb').read() for n in sorted(os.listdir(os.path.join(M,k)))]
+    return [(b'%s%d.' % (k.encode(), i)) * 5000 for i in range(3)]
+assert open('$W/saved_v','rb').read()==b''.join(pieces('video'))
+assert open('$W/saved_a','rb').read()==b''.join(pieces('audio'))
+segs=[r for r in (json.loads(l) for l in open('$W/log')) if r.get('path','').startswith('/seg/')]
+assert all('Safari' in (r['ua'] or '') for r in segs), segs[:2]
+assert any(r['host']=='manifest.googlevideo.com' for r in segs)
+\""
+if [ -n "${FAKE_MEDIA:-}" ]; then
+  "$CLI" save 7PIMiDcwNvc 720 "$W/joined.mp4" 2> "$W/err" || { cat "$W/err"; fail=1; }
+  check "save, joined by ffmpeg: one MP4 with H.264 and AAC, 6 s, the pieces deleted" "ffprobe -v error -show_entries stream=codec_name:format=duration,format_name -of default=nw=1 '$W/joined.mp4' > '$W/probe' &&
+    grep -q codec_name=h264 '$W/probe' && grep -q codec_name=aac '$W/probe' && grep -q 'format_name=mov' '$W/probe' &&
+    python3 -I -c \"import re;d=float(re.search(r'duration=([0-9.]+)',open('$W/probe').read()).group(1));assert 5.5<d<6.6,d\" &&
+    [ ! -e '$W/joined.mp4_v' ] && [ ! -e '$W/joined.mp4_a' ]"
+fi
+printf 'stream_format = dash\n' > "$W/dash2.cfg"
+TUBE_SAVE_RANGE=300000 TUBE_NOJOIN=1 "$CLI" -config "$W/dash2.cfg" save 7PIMiDcwNvc 720 "$W/dsaved" 2> "$W/err" || { cat "$W/err"; fail=1; }
+check "save as DASH: the whole of each stream (clen), in 300 KB ranges" "python3 -I -c \"
+import json,re
+log=[json.loads(l) for l in open('$W/log')]
+vp=[r for r in log if r.get('path','').startswith('/videoplayback')]
+for f in ('$W/dsaved_v','$W/dsaved_a'):
+    d=open(f,'rb').read()
+    assert d==bytes((i*7+3)%251 for i in range(len(d))), f
+    assert any(len(d)==int(re.search(r'clen=([0-9]+)',r['path']).group(1)) for r in vp), (f, len(d))
+assert vp and all(r['range'] and r['range'].startswith('bytes=') for r in vp)
+assert all(int(r['range'][6:].split('-')[1])-int(r['range'][6:].split('-')[0])<300000 for r in vp)
+assert len(vp)>2
+\""
+"$CLI" save 7PIMiDcwNvc 720 "$W/nodir/x/y.mp4" > /dev/null 2> "$W/err" && fail=1
+check "save where it can't be written: said so" "grep -q \"Couldn't create\" '$W/err'"
 
 [ $fail = 0 ] && echo "e2e: all passed" || echo "e2e: FAILED"
 exit $fail

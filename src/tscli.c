@@ -34,6 +34,7 @@
 #include "api.h"
 #include "proxy.h"
 #include "subs.h"
+#include "save.h"
 #include "ejsupd.h"
 #include "http.h"
 #include "solvejob.h"
@@ -95,6 +96,47 @@ static void play_done (yt_play *p, const char *err, void *ctx)
   finished = 1;
 }
 
+/* save: the streams into <file>_v and <file>_a, then ffmpeg joins them */
+static const char *save_file;
+static int save_has_audio, save_ok;
+
+static void save_progress (int parts, int total, long kbytes, void *ctx)
+{
+  (void) ctx;
+  fprintf (stderr, "\r%d of %d pieces, %ld KB   ", parts, total, kbytes);
+}
+
+static void save_done (int ok, const char *err, void *ctx)
+{
+  (void) ctx;
+  fputc ('\n', stderr);
+  if (!ok)
+    {
+      fprintf (stderr, "tscli: %s\n", err);
+      failed = 1;
+    }
+  save_ok = ok;
+  finished = 1;
+}
+
+static void save_play_done (yt_play *p, const char *err, void *ctx)
+{
+  char v[600], a[600], e[300];
+  play_done (p, err, ctx);
+  if (!p)
+    return;
+  finished = 0;
+  snprintf (v, sizeof v, "%s_v", save_file);
+  snprintf (a, sizeof a, "%s_a", save_file);
+  save_has_audio = p->audio_url != NULL;
+  if (!save_start (p, v, a, save_progress, save_done, NULL, e, sizeof e))
+    {
+      fprintf (stderr, "tscli: %s\n", e);
+      failed = 1;
+      finished = 1;
+    }
+}
+
 static void wait_done (void)
 {
   finished = 0;
@@ -130,7 +172,7 @@ static int usage (void)
                    "             [-date any|today|week|month|year] [-proxy URL|none] [-sound mine|original|LANG] [-fps 30|60]\n"
                    "             [-lang fr|en-GB...] [-region FR|GB...] [-languages \"en de\"]\n"
                    "             search WORDS... | related ID | channel ID | play ID [LINES] [FILE]\n"
-                   "             | feed UC... [UC...] | import FILE\n"
+                   "             | feed UC... [UC...] | import FILE | save ID LINES FILE\n"
                    "             | update | [-wimp] solve JOB ANSWER\n");
   return 2;
 }
@@ -359,6 +401,51 @@ int main (int argc, char **argv)
   if (a + 1 >= argc)
     return usage ();
 
+  if (!strcmp (argv[a], "save") && a + 3 < argc)
+    {
+      /* save ID LINES FILE: fetch the streams, then ffmpeg joins them */
+      char v[600], au[600], args[2000], cmd[2100];
+      const char *env = getenv ("TUBE_SAVE_RANGE");
+      int maxq = atoi (argv[a + 2]);
+      if (env && atol (env) > 0)
+        save_range_size = atoll (env);
+      save_file = argv[a + 3];
+      if (!api_play (argv[a + 1], maxq ? maxq : 1080, save_play_done, (void *) argv[a + 1]))
+        return 1;
+      wait_done ();                             /* (the play, then the fetch) */
+      free (out_json);
+      if (failed || !save_ok)
+        return 1;
+      snprintf (v, sizeof v, "%s_v", save_file);
+      snprintf (au, sizeof au, "%s_a", save_file);
+      if (getenv ("TUBE_NOJOIN"))
+        {
+          fprintf (stderr, "saved %s%s%s (not joined)\n", v, save_has_audio ? " and " : "", save_has_audio ? au : "");
+          return 0;
+        }
+      if (save_join_args (args, sizeof args, v, save_has_audio ? au : NULL, save_file))
+        return 1;
+      snprintf (cmd, sizeof cmd, "ffmpeg %s", args);
+      if (system (cmd))
+        {
+          fprintf (stderr, "tscli: ffmpeg couldn't join them (is !FFmpeg known?); the pieces are %s%s%s\n", v,
+                   save_has_audio ? " and " : "", save_has_audio ? au : "");
+          return 1;
+        }
+      {
+        char bad[200];
+        if (save_check_mp4 (save_file, bad, sizeof bad))
+          {
+            fprintf (stderr, "tscli: ffmpeg's MP4 isn't right: %s; the pieces are kept\n", bad);
+            return 1;
+          }
+      }
+      remove (v);
+      if (save_has_audio)
+        remove (au);
+      fprintf (stderr, "saved %s\n", save_file);
+      return 0;
+    }
   if (!strcmp (argv[a], "play"))
     {
       const char *id = argv[a + 1];

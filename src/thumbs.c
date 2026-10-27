@@ -31,6 +31,7 @@ struct thumb {
   int w, h;
   int *area;                  /* sprite area with one sprite */
   unsigned stamp;
+  int tries;                  /* fetches so far (a failed one is tried again, up to 3) */
 };
 
 static thumb table[MAX_THUMBS];
@@ -139,15 +140,32 @@ static int decode (thumb *t, const char *jpeg, size_t len)
   return 0;
 }
 
+static int start_fetch (thumb *t);
+
 static void fetched (http_req *r, void *ctx)
 {
   thumb *t = ctx;
   size_t len;
   const char *body = http_body (r, &len);
-  if (http_status (r) == 200 && len > 0 && decode (t, body, len) == 0)
+  int st = http_status (r);
+  if (st == 200 && len > 0 && decode (t, body, len) == 0)
     t->state = T_READY;
   else
-    t->state = T_FAILED;
+    {
+      t->state = T_FAILED;
+      if (t->tries < 3)
+        {
+          /* again: a dropped connection, a busy server... A 320x180
+             picture that isn't there (404): the 480x360 one instead */
+          char *m = strstr (t->url, "/mqdefault.jpg");
+          if (st == 404 && m)
+            memcpy (m + 1, "hq", 2);
+          if (start_fetch (t))
+            t->state = T_FAILED;
+          else
+            return;
+        }
+    }
   if (arrived_fn && t->state == T_READY)
     arrived_fn (t->url);
 }
@@ -168,6 +186,7 @@ static int start_fetch (thumb *t)
             yt_config_get ("thumb_user_agent"));
   if (!http_get (host, slash, headers, TAG_THUMB, fetched, t))
     return -1;
+  t->tries++;
   t->state = T_LOADING;
   return 0;
 }

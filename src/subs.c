@@ -688,17 +688,11 @@ int subs_parse_feed (const char *xml, size_t len, yt_list *list, long now, long 
       it->title = text_display (title);
       it->channel = text_display (name);
       it->meta = text_display (meta);
-      /* the 320x180 picture, as the lists use (the feed names the 480x360 hqdefault) */
-      if (thumb[0])
-        {
-          char *h = strstr (thumb, "/hqdefault.jpg");
-          char t2[420];
-          if (h)
-            snprintf (t2, sizeof t2, "%.*s/mqdefault.jpg", (int) (h - thumb), thumb);
-          else
-            snprintf (t2, sizeof t2, "%s", thumb);
-          it->thumb_url = strdup (t2);
-        }
+      /* the 320x180 picture, as the lists use, from i.ytimg.com as theirs
+         is (the feed names the 480x360 hqdefault on i1-i4.ytimg.com, a
+         connection more each; some of those pictures didn't arrive) */
+      if (thumb[0] && !strstr (thumb, "/vi/"))
+        it->thumb_url = strdup (thumb);
       else
         {
           char t2[100];

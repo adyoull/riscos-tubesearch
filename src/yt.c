@@ -1778,6 +1778,132 @@ static char *hls_resolve (const char *base, const char *name, size_t n)
   return sb_done (&b);
 }
 
+void yt_free_strings (char **v, int n)
+{
+  for (int i = 0; i < n && v; i++)
+    free (v[i]);
+  free (v);
+}
+
+int yt_hls_segments (const char *m3u8, size_t len, const char *base_url, char ***uris, double *seconds,
+                     char *err, size_t errlen)
+{
+  const char *p = m3u8, *end = m3u8 + len;
+  char **v = NULL, *map = NULL;
+  int n = 0, cap = 0, ended = 0;
+  *uris = NULL;
+  *seconds = 0;
+  if (len < 7 || strncmp (m3u8, "#EXTM3U", 7))
+    {
+      snprintf (err, errlen, "That isn't an HLS playlist");
+      return -1;
+    }
+  while (p < end)
+    {
+      const char *e = memchr (p, '\n', (size_t) (end - p)), *l = p;
+      size_t ln;
+      char *uri;
+      if (!e)
+        e = end;
+      ln = (size_t) (e - p);
+      p = e + 1;
+      while (ln && (l[ln - 1] == '\r' || l[ln - 1] == ' '))
+        ln--;
+      if (!ln)
+        continue;
+      if (*l == '#')
+        {
+          if (ln >= 18 && !strncmp (l, "#EXT-X-STREAM-INF:", 18))
+            {
+              snprintf (err, errlen, "That's a master playlist, not one stream's");
+              goto bad;
+            }
+          if (ln >= 11 && !strncmp (l, "#EXT-X-KEY:", 11))
+            {
+              char m[16];
+              if (!hls_attr (l + 11, ln - 11, "METHOD", m, sizeof m) || strcmp (m, "NONE"))
+                {
+                  snprintf (err, errlen, "The stream is encrypted");
+                  goto bad;
+                }
+            }
+          else if (ln >= 8 && !strncmp (l, "#EXTINF:", 8))
+            *seconds += atof (l + 8);
+          else if (ln >= 17 && !strncmp (l, "#EXT-X-BYTERANGE:", 17))
+            {
+              snprintf (err, errlen, "The stream is in byte ranges of one file, which TubeSearch can't save");
+              goto bad;
+            }
+          else if (ln >= 14 && !strncmp (l, "#EXT-X-ENDLIST", 14))
+            ended = 1;
+          else if (ln >= 11 && !strncmp (l, "#EXT-X-MAP:", 11) && !map)
+            {
+              char u[2048];
+              if (hls_attr (l + 11, ln - 11, "URI", u, sizeof u) && !(map = hls_resolve (base_url, u, strlen (u))))
+                goto oom;
+            }
+          continue;
+        }
+      if (!(uri = hls_resolve (base_url, l, ln)))
+        goto oom;
+      if (n + 2 > cap)
+        {
+          int c = cap ? cap * 2 : 64;
+          char **nv = realloc (v, (size_t) c * sizeof *nv);
+          if (!nv)
+            {
+              free (uri);
+              goto oom;
+            }
+          v = nv;
+          cap = c;
+        }
+      v[n++] = uri;
+    }
+  if (!ended)
+    {
+      snprintf (err, errlen, "It's a live stream: it can't be saved");
+      goto bad;
+    }
+  if (!n)
+    {
+      snprintf (err, errlen, "The playlist has no pieces");
+      goto bad;
+    }
+  if (map)
+    {
+      /* (n + 2 <= cap: there's room) */
+      memmove (v + 1, v, (size_t) n * sizeof *v);
+      v[0] = map;
+      n++;
+    }
+  *uris = v;
+  return n;
+oom:
+  snprintf (err, errlen, "Out of memory");
+bad:
+  free (map);
+  yt_free_strings (v, n);
+  return -1;
+}
+
+long long yt_url_clen (const char *url)
+{
+  const char *q = url ? strchr (url, '?') : NULL;
+  while (q)
+    {
+      q++;
+      if (!strncmp (q, "clen=", 5))
+        {
+          char *e;
+          long long v = strtoll (q + 5, &e, 10);
+          return e > q + 5 && v > 0 ? v : -1;
+        }
+      q = strchr (q, '&');
+    }
+  return -1;
+}
+
 int yt_hls_choose (const char *m3u8, size_t len, const char *base_url, int maxq,
                    char **video, char **audio, int *quality, char *codec, size_t codecsize,
                    yt_audio *audio_info, char *err, size_t errlen)

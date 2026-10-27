@@ -35,8 +35,28 @@ In the window:
   Refresh (or F5)       the page on screen fetched again: new results, a
                         channel's newest videos, or a live stream that has
                         started since
-  Menu                  Play, Related, Channel, Subscribe, Back, Refresh,
-                        Quality, Frame rate and Sound
+  Menu                  Play, Related, Channel, Save video, Subscribe, Back,
+                        Refresh, Quality, Frame rate and Sound
+
+Saving a video
+--------------
+Save video... on a video's menu leads to a save box: drag its file icon
+to a Filer window, or type a full name (such as SDFS::Pi.$.Videos.x/mp4)
+and press Return. The video is saved as an MP4 at the Quality, Frame rate
+and Sound chosen on the menus. A Saving window shows how far it has got
+(a bar, and the pieces as they arrive), with Stop; closing it doesn't
+stop the save (the status line follows it too). Saving needs an ffmpeg command: !FFmpeg (riscos-ffmpeg),
+seen by the Filer, or another RISC OS port of FFmpeg on Run$Path.
+TubeSearch fetches the picture and the sound into two files beside the
+MP4 (<name>_v and <name>_a), then ffmpeg joins them in a TaskWindow, without re-encoding, into <name>_t, which takes the name once
+it's complete (a file of that name already there is only replaced then);
+the other two are then deleted. One video at a time: the menu says Stop
+saving meanwhile, and TubeSearch won't quit until it's finished or
+stopped. Live streams can't be saved.
+
+Only save videos you have the right to keep: your own, ones under a
+licence that allows it (Creative Commons, say), or as the law where you
+are and YouTube's terms allow.
 
 Subscriptions
 -------------
@@ -203,6 +223,7 @@ and find faults (and the JavaScript helper):
   tscli -lang fr -region FR ... YouTube's language and country
   tscli -languages "en de" ...  other languages you understand
   tscli feed UC... [UC...]      those channels' newest videos
+  tscli save <ID> <lines> <file>  saves a video as an MP4 (ffmpeg joins it)
   tscli import <file>           the channels in a subscriptions list
 
 Licence

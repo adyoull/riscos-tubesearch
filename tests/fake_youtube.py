@@ -18,6 +18,31 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 PORT, CERT, KEY, FIX, LOG = int(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
 EJS = sys.argv[6] if len(sys.argv) > 6 else '/nonexistent'
 HLS_MASTER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'hls', 'master.m3u8')
+# Saving a video: FAKE_MEDIA is a directory with video/NNN.ts and
+# audio/NNN.ts (real pieces e2e.sh made with ffmpeg), else made-up bytes.
+MEDIA = os.environ.get('FAKE_MEDIA', '')
+AUDIO_ITAGS = ('139', '140', '233', '234')
+
+
+def pieces(kind):
+    if MEDIA and os.path.isdir(os.path.join(MEDIA, kind)):
+        return [open(os.path.join(MEDIA, kind, n), 'rb').read() for n in sorted(os.listdir(os.path.join(MEDIA, kind)))]
+    return [(b'%s%d.' % (kind.encode(), i)) * 5000 for i in range(3)]
+
+
+def media_playlist(kind):
+    # YouTube's media playlists list absolute addresses on the stream
+    # servers; one here is root-relative, to check they're resolved
+    lines = ['#EXTM3U', '#EXT-X-VERSION:3', '#EXT-X-TARGETDURATION:2', '#EXT-X-PLAYLIST-TYPE:VOD']
+    for i, _ in enumerate(pieces(kind)):
+        lines.append('#EXTINF:2.000,')
+        lines.append('/seg/%s/%d' % (kind, i) if i == 1 else 'https://rr1---sn-fake.googlevideo.com/seg/%s/%d' % (kind, i))
+    lines.append('#EXT-X-ENDLIST')
+    return ('\n'.join(lines) + '\n').encode()
+
+
+def pattern(start, end):
+    return bytes((i * 7 + 3) % 251 for i in range(start, end))
 lock = threading.Lock()
 count = [0]
 VISITOR = json.load(open(FIX + '/visitor.json'))['responseContext']['visitorData']
@@ -57,7 +82,8 @@ class H(BaseHTTPRequestHandler):
 
     def do_GET(self):
         host = self.headers.get('Host')
-        self.record({'method': 'GET', 'path': self.path, 'host': host})
+        self.record({'method': 'GET', 'path': self.path, 'host': host, 'ua': self.headers.get('User-Agent'),
+                     'range': self.headers.get('Range')})
         if host == 'www.youtube.com' and self.path.startswith('/feeds/videos.xml?channel_id='):
             # a channel's feed (tests/subs), or 404 as for a channel that's gone
             f = os.path.join(os.path.dirname(HLS_MASTER), '..', 'subs', 'feed_%s.xml' % self.path.split('=', 1)[1])
@@ -68,6 +94,34 @@ class H(BaseHTTPRequestHandler):
         elif host == 'manifest.googlevideo.com' and self.path.startswith('/api/manifest/hls_variant/'):
             # the HLS master playlist (a synthetic one in YouTube's form)
             self.send_body(200, open(HLS_MASTER, 'rb').read(), 'application/vnd.apple.mpegurl')
+        elif host == 'manifest.googlevideo.com' and self.path.startswith('/api/manifest/hls_playlist/'):
+            # one stream's media playlist
+            itag = self.path.split('/itag/')[1].split('/')[0]
+            self.send_body(200, media_playlist('audio' if itag in AUDIO_ITAGS else 'video'), 'application/vnd.apple.mpegurl')
+        elif host.endswith('googlevideo.com') and self.path.startswith('/seg/'):
+            kind, i = self.path.split('/')[2:4]
+            p = pieces(kind)
+            if int(i) < len(p):
+                self.send_body(200, p[int(i)], 'video/mp2t')
+            else:
+                self.send_body(404, b'no such piece', 'text/plain')
+        elif host.endswith('googlevideo.com') and self.path.startswith('/videoplayback'):
+            # a DASH stream: clen bytes of a pattern, in the Range asked for
+            q = dict(kv.split('=', 1) for kv in self.path.split('?', 1)[1].split('&') if '=' in kv)
+            size = int(q.get('clen', '100000'))
+            rng = self.headers.get('Range')
+            if rng and rng.startswith('bytes='):
+                a, b = rng[6:].split('-')
+                a, b = int(a), min(int(b) if b else size - 1, size - 1)
+                self.send_response(206)
+                self.send_header('Content-Range', 'bytes %d-%d/%d' % (a, b, size))
+                body = pattern(a, b + 1)
+                self.send_header('Content-Length', str(len(body)))
+                self.send_header('Content-Type', 'video/mp4')
+                self.end_headers()
+                self.wfile.write(body)
+            else:
+                self.send_body(200, pattern(0, size), 'video/mp4')
         elif host == 'i.ytimg.com' and self.path.endswith('/mqdefault.jpg'):
             self.send_body(200, fixture('thumb.jpg'), 'image/jpeg')
         elif host == 'www.youtube.com' and self.path == '/iframe_api':

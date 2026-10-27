@@ -14,15 +14,15 @@ RCD_DIR ?= ../riscos-crossdev
 include $(RCD_DIR)/riscos.mk
 .DEFAULT_GOAL := all
 
-VERSION := 0.2.0-rc12
-DATE := 22 Oct 2026
+VERSION := 0.2.0-rc13
+DATE := 27 Oct 2026
 VERDEFS := -DTUBE_VERSION='"$(VERSION)"' -DTUBE_DATE='"$(DATE)"'
 OUT := out
 EJS_VERSION := 0.8.0
 EJS := ejs/$(EJS_VERSION)
 
-CORE := src/api.c src/http.c src/yt.c src/json.c src/text.c src/solvejob.c src/ejsupd.c src/sha3.c src/proxy.c src/subs.c
-CORE_H := src/api.h src/http.h src/yt.h src/json.h src/text.h src/transport.h src/solvejob.h src/ejsupd.h src/sha3.h src/proxy.h src/subs.h src/alphabets.h
+CORE := src/api.c src/http.c src/yt.c src/json.c src/text.c src/solvejob.c src/ejsupd.c src/sha3.c src/proxy.c src/subs.c src/save.c
+CORE_H := src/api.h src/http.h src/yt.h src/json.h src/text.h src/transport.h src/solvejob.h src/ejsupd.h src/sha3.h src/proxy.h src/subs.h src/alphabets.h src/save.h
 SOLVER := src/solverun.c src/jsolve.c
 QJS_DIR := third_party/quickjs
 QJS_SRC := $(QJS_DIR)/quickjs.c $(QJS_DIR)/libregexp.c $(QJS_DIR)/libunicode.c $(QJS_DIR)/cutils.c $(QJS_DIR)/dtoa.c

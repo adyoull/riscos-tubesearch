@@ -230,6 +230,15 @@ void yt_free_strings (char **v, int n);
 /* A googlevideo address's clen= (the stream's size in bytes), or -1. */
 long long yt_url_clen (const char *url);
 
+/* Text to share a video by, malloc'd: YT_SHARE_EMBED, YouTube's embed
+   code (the <iframe> its Share > Embed gives); YT_SHARE_EMBED_NOCOOKIE,
+   the same from youtube-nocookie.com (its privacy-enhanced mode);
+   YT_SHARE_LINK, https://www.youtube.com/watch?v=ID; YT_SHARE_SHORT,
+   https://youtu.be/ID. title (any alphabet; HTML-escaped in the embed
+   code) may be NULL. */
+enum { YT_SHARE_EMBED, YT_SHARE_EMBED_NOCOOKIE, YT_SHARE_LINK, YT_SHARE_SHORT };
+char *yt_share_text (int kind, const char *id, const char *title);
+
 /* What Reel reads: yt-dlp's -j JSON (title, the addresses, and the
    headers). malloc'd. */
 char *yt_reel_json (const yt_play *p, const char *video_id);

@@ -35,8 +35,8 @@ In the window:
   Refresh (or F5)       the page on screen fetched again: new results, a
                         channel's newest videos, or a live stream that has
                         started since
-  Menu                  Play, Related, Channel, Save video, Subscribe, Back,
-                        Refresh, Quality, Frame rate and Sound
+  Menu                  Play, Related, Channel, Save video, Copy, Subscribe,
+                        Back, Refresh, Quality, Frame rate and Sound
 
 Saving a video
 --------------
@@ -57,6 +57,17 @@ stopped. Live streams can't be saved.
 Only save videos you have the right to keep: your own, ones under a
 licence that allows it (Creative Commons, say), or as the law where you
 are and YouTube's terms allow.
+
+Copying a video's embed code or link
+------------------------------------
+Copy on a video's menu puts one of these on the clipboard, to paste with
+Ctrl-V into an editor, a web page's form and so on:
+  Embed code                YouTube's <iframe> code for a web page
+  Embed code (no cookies)   the same from youtube-nocookie.com, YouTube's
+                            privacy-enhanced mode (no cookies until the
+                            video is played)
+  Link                      https://www.youtube.com/watch?v=...
+  Short link                https://youtu.be/...
 
 Subscriptions
 -------------

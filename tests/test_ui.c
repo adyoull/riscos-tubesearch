@@ -45,6 +45,8 @@ static void *last_menu;
 static int acks_sent;
 /* the smallest MP4 save_check_mp4 takes: ftyp, moov, mdat */
 #define MINI_MP4 "\0\0\0\x10" "ftypisom\0\0\0\0" "\0\0\0\x08" "moov" "\0\0\0\x0C" "mdat" "data"
+static int claims, dataload_to;
+static char dataload_path[256];
 static int drags, morites, datasave[64], datasave_to, ptr_win = -1, ptr_icon = -1, typed_as;
 static char typed_path[600];
 static char last_search[8192];             /* the body of the newest search request */
@@ -222,6 +224,13 @@ static const _kernel_oserror *wimp (int swi, int r[10])
         }
       if (((int *) r[1])[4] == 0x808C4)              /* Message_TaskWindow_Morite */
         morites++;
+      if (((int *) r[1])[4] == 15 && r[2] == 0)      /* Message_ClaimEntity, to everyone */
+        claims = ((int *) r[1])[5];
+      if (((int *) r[1])[4] == 3 && r[0] == 18)      /* Message_DataLoad (recorded) */
+        {
+          dataload_to = r[2];
+          snprintf (dataload_path, sizeof dataload_path, "%s", (const char *) &((int *) r[1])[11]);
+        }
       return NULL;
     }
   return &err_bad;
@@ -767,7 +776,7 @@ int main (int argc, char **argv)
   /* Menu: Quality > 720p, then play again */
   click_tile (3, 100, 100, 2);
   {
-    int sel[4] = { 7, 2, -1, -1 };              /* Play, Related, Channel, Save video, Subscribe, Back, Refresh, Quality > 720p */
+    int sel[4] = { 8, 2, -1, -1 };              /* Play, Related, Channel, Save video, Copy, Subscribe, Back, Refresh, Quality > 720p */
     ui_event (9, sel);
     click_tile (3, 100, 100, 4);
     pump ();
@@ -791,8 +800,8 @@ int main (int argc, char **argv)
     click_tile (3, 100, 100, 2);
     {
       const int *m = (const int *) last_menu;
-      int sel[4] = { 6, -1, -1, -1 };          /* Play, Related, Channel, Save video, Subscribe, Back, Refresh */
-      CHECK (m && !strcmp ((const char *) &m[7 + 6 * 6 + 3], "Refresh"), "Refresh on the menu");
+      int sel[4] = { 7, -1, -1, -1 };          /* Play, Related, Channel, Save video, Copy, Subscribe, Back, Refresh */
+      CHECK (m && !strcmp ((const char *) &m[7 + 7 * 6 + 3], "Refresh"), "Refresh on the menu");
       ui_event (9, sel);
       pump ();
       CHECK (api_requests == before + 3, "and from the menu");
@@ -804,7 +813,7 @@ int main (int argc, char **argv)
   {
     char path[600], text[600] = "";
     FILE *f;
-    int sel[4] = { 8, 1, -1, -1 };              /* ... Quality, Frame rate > 60 a second */
+    int sel[4] = { 9, 1, -1, -1 };              /* ... Quality, Frame rate > 60 a second */
     size_t n;
     click_tile (3, 100, 100, 2);
     ui_event (9, sel);
@@ -1042,8 +1051,8 @@ int main (int argc, char **argv)
     click_tile (1, 100, 100, 2);
     {
       const int *m = (const int *) last_menu;
-      int sel[4] = { 9, 1, -1, -1 };            /* Play, Related, Channel, Save video, Subscribe, Back, Refresh, Quality, Frame rate, Sound > Original */
-      CHECK (m && !strcmp ((const char *) &m[7 + 9 * 6 + 3], "Sound") && (m[7 + 9 * 6] & 0x80), "the Sound menu, last");
+      int sel[4] = { 10, 1, -1, -1 };            /* Play, Related, Channel, Save video, Copy, Subscribe, Back, Refresh, Quality, Frame rate, Sound > Original */
+      CHECK (m && !strcmp ((const char *) &m[7 + 10 * 6 + 3], "Sound") && (m[7 + 10 * 6] & 0x80), "the Sound menu, last");
       ui_event (9, sel);
     }
     CHECK (!strcmp (yt_config_get ("audio_language"), "original"), "Sound > Original chosen");
@@ -1060,7 +1069,7 @@ int main (int argc, char **argv)
         }
       click_tile (1, 100, 100, 2);
       m = (const int *) last_menu;
-      sm = m ? (const int *) m[7 + 9 * 6 + 1] : NULL;
+      sm = m ? (const int *) m[7 + 10 * 6 + 1] : NULL;
       CHECK (sm && !strcmp ((const char *) &sm[7 + 2 * 6 + 3], "Language") && (sm[7 + 1 * 6] & 2)
              && (sm[7 + 3 * 6] & 0x80) && !strcmp ((const char *) sm[7 + 3 * 6 + 3], "I also understand"),
              "Sound: My language, Original, Language, I also understand");
@@ -1069,39 +1078,39 @@ int main (int argc, char **argv)
       CHECK (lm && um && fr >= 0 && !strncmp ((const char *) &lm[7 + fr * 6 + 3], "French", 6)
              && !(lm[7 + fr * 6] & 1) && !(um[7 + en * 6] & 1), "the languages, none ticked");
       {
-        int sel[4] = { 9, 2, fr, -1 };
+        int sel[4] = { 10, 2, fr, -1 };
         ui_event (9, sel);
       }
       CHECK (!strcmp (yt_config_get ("audio_language"), "fr"), "Sound > Language > French");
       click_tile (1, 100, 100, 2);
       m = (const int *) last_menu;
-      sm = (const int *) m[7 + 9 * 6 + 1];
+      sm = (const int *) m[7 + 10 * 6 + 1];
       lm = (const int *) sm[7 + 2 * 6 + 1];
       CHECK ((sm[7 + 2 * 6] & 1) && (lm[7 + fr * 6] & 1) && !(sm[7] & 1), "French ticked (and Language)");
       {
-        int sel[4] = { 9, 3, en, -1 };
+        int sel[4] = { 10, 3, en, -1 };
         ui_event (9, sel);
       }
       CHECK (!strcmp (yt_config_get ("languages"), "en"), "I also understand > English");
       click_tile (1, 100, 100, 2);
       m = (const int *) last_menu;
-      sm = (const int *) m[7 + 9 * 6 + 1];
+      sm = (const int *) m[7 + 10 * 6 + 1];
       um = (const int *) sm[7 + 3 * 6 + 1];
       CHECK (um[7 + en * 6] & 1, "English ticked");
       {
-        int sel[4] = { 9, 3, en, -1 };
+        int sel[4] = { 10, 3, en, -1 };
         ui_event (9, sel);
       }
       CHECK (!strcmp (yt_config_get ("languages"), ""), "and off again");
       /* Sound > My language > French: the language and country YouTube is told; then Automatic */
       click_tile (1, 100, 100, 2);
       m = (const int *) last_menu;
-      sm = (const int *) m[7 + 9 * 6 + 1];
+      sm = (const int *) m[7 + 10 * 6 + 1];
       {
         const int *mm = (const int *) sm[7 + 1];
         CHECK (mm && !strcmp ((const char *) &mm[7 + 3], "Automatic") && (mm[7] & 1) && (mm[7] & 2)
                && !strncmp ((const char *) &mm[7 + (fr + 1) * 6 + 3], "French", 6), "My language: Automatic (ticked), then the languages");
-        int sel[4] = { 9, 0, fr + 1, -1 };
+        int sel[4] = { 10, 0, fr + 1, -1 };
         ui_event (9, sel);
       }
       CHECK (!strcmp (yt_config_get ("language"), "fr") && !strcmp (yt_config_get ("region"), "FR")
@@ -1120,10 +1129,10 @@ int main (int argc, char **argv)
       }
       click_tile (1, 100, 100, 2);
       m = (const int *) last_menu;
-      sm = (const int *) m[7 + 9 * 6 + 1];
+      sm = (const int *) m[7 + 10 * 6 + 1];
       CHECK (!strcmp ((const char *) sm[7 + 3], "My language (French)"), "and named");
       {
-        int sel[4] = { 9, 0, 0, -1 };             /* Automatic */
+        int sel[4] = { 10, 0, 0, -1 };             /* Automatic */
         ui_event (9, sel);
       }
       CHECK (!strcmp (yt_config_get ("language"), "fr") && !strcmp (yt_config_get ("region"), "FR")
@@ -1134,7 +1143,7 @@ int main (int argc, char **argv)
     }
     click_tile (1, 100, 100, 2);
     {
-      const int *m = (const int *) last_menu, *sm = m ? (const int *) m[7 + 9 * 6 + 1] : NULL;
+      const int *m = (const int *) last_menu, *sm = m ? (const int *) m[7 + 10 * 6 + 1] : NULL;
       CHECK (sm && (sm[7 + 2] & 0x100) && !strcmp ((const char *) sm[7 + 3], "My language (German)"),
              "Sound's first item names my language");
     }
@@ -1250,15 +1259,15 @@ int main (int argc, char **argv)
     click_tile (0, 100, 100, 2);
     {
       const int *m = (const int *) last_menu;
-      int sub[4] = { 4, -1, -1, -1 };             /* Play, Related, Channel, Save video, Subscribe */
-      CHECK (m && !strcmp ((const char *) &m[7 + 4 * 6 + 3], "Subscribe"), "a video's channel: Subscribe");
+      int sub[4] = { 5, -1, -1, -1 };             /* Play, Related, Channel, Save video, Copy, Subscribe */
+      CHECK (m && !strcmp ((const char *) &m[7 + 5 * 6 + 3], "Subscribe"), "a video's channel: Subscribe");
       ui_event (9, sub);
     }
     CHECK (strstr (status (), "Subscribed to ") && strstr (status (), "(3 channels)"), "subscribed");
     click_tile (0, 100, 100, 2);
     {
       const int *m = (const int *) last_menu;
-      CHECK (m && !strcmp ((const char *) &m[7 + 4 * 6 + 3], "Unsubscribe"), "now Unsubscribe");
+      CHECK (m && !strcmp ((const char *) &m[7 + 5 * 6 + 3], "Unsubscribe"), "now Unsubscribe");
     }
   }
 
@@ -1603,6 +1612,63 @@ int main (int argc, char **argv)
     ui_event (17, msg);
     snprintf (v, sizeof v, "%s_v", o);
     CHECK (strstr (status (), "Stopped saving") && access (v, F_OK), "and its end (TaskCloseDown) finishes it");
+  }
+
+  /* Copy > Embed code: the clipboard claimed; a paste (DataRequest) gets the
+     text by the save protocol (DataSave, DataSaveAck, the file, DataLoad) */
+  {
+    int sel[4] = { 4, 0, -1, -1 }, msg[64];
+    const int *m;
+    type_and_search ("test");
+    pump ();
+    click_tile (0, 100, 100, 2);
+    m = (const int *) last_menu;
+    CHECK (m && !strcmp ((const char *) &m[7 + 4 * 6 + 3], "Copy") && m[7 + 4 * 6 + 1], "Copy after Save video, with its submenu");
+    {
+      const int *cm = (const int *) m[7 + 4 * 6 + 1];
+      CHECK (!strcmp ((const char *) &cm[7 + 3], "Embed code") && !strcmp ((const char *) cm[7 + 6 + 3], "Embed code (no cookies)")
+             && !strcmp ((const char *) &cm[7 + 12 + 3], "Link") && !strcmp ((const char *) &cm[7 + 18 + 3], "Short link"),
+             "Copy: Embed code, Embed code (no cookies), Link, Short link");
+    }
+    claims = 0;
+    ui_event (9, sel);
+    CHECK (claims == 4 && strstr (status (), "Copied the embed code"), "the clipboard claimed");
+    memset (msg, 0, sizeof msg);
+    msg[0] = 52; msg[1] = 0x77; msg[2] = 0x4242; msg[4] = 16;          /* DataRequest from task &77 */
+    msg[5] = 9; msg[6] = -1; msg[7] = 10; msg[8] = 20; msg[9] = 4; msg[10] = 0xFFF; msg[11] = -1;
+    datasave[0] = 0;
+    ui_event (17, msg);
+    CHECK (datasave_to == 0x77 && datasave[3] == 0x4242 && datasave[5] == 9 && datasave[10] == 0xFFF,
+           "a paste: DataSave of text to it");
+    memset (msg, 0, sizeof msg);
+    msg[0] = 64; msg[1] = 0x77; msg[2] = 0x4343; msg[3] = 0x5151; msg[4] = 2; msg[9] = -1;
+    snprintf ((char *) &msg[11], 200, "<Wimp$Scrap>");
+    if (saved_data)
+      saved_data[0] = 0;
+    ui_event (17, msg);
+    CHECK (!strcmp (saved_path, "<Wimp$Scrap>") && saved_data && !strncmp (saved_data, "<iframe width=\"560\" height=\"315\" src=\"https://www.youtube.com/embed/", 68)
+           && strstr (saved_data, "allowfullscreen></iframe>"), "the embed code written where it said");
+    CHECK (dataload_to == 0x77 && !strcmp (dataload_path, "<Wimp$Scrap>"), "then DataLoad to it");
+    /* another task claims the clipboard: a paste then isn't ours to answer */
+    memset (msg, 0, sizeof msg);
+    msg[0] = 24; msg[1] = 0x88; msg[4] = 15; msg[5] = 4;
+    ui_event (17, msg);
+    memset (msg, 0, sizeof msg);
+    msg[0] = 52; msg[1] = 0x77; msg[4] = 16; msg[9] = 4; msg[10] = -1;
+    datasave_to = 0;
+    ui_event (17, msg);
+    CHECK (datasave_to == 0, "someone else's clipboard: not answered");
+    /* no cookies, and the short link */
+    click_tile (0, 100, 100, 2);
+    sel[1] = 1;
+    ui_event (9, sel);
+    msg[1] = 0x77; msg[2] = 0x4444; msg[5] = 9; msg[10] = 0xFFF; msg[11] = -1;
+    ui_event (17, msg);
+    memset (msg, 0, sizeof msg);
+    msg[0] = 64; msg[1] = 0x77; msg[3] = 0x5151; msg[4] = 2;
+    snprintf ((char *) &msg[11], 200, "<Wimp$Scrap>");
+    ui_event (17, msg);
+    CHECK (saved_data && strstr (saved_data, "https://www.youtube-nocookie.com/embed/"), "Embed code (no cookies)");
   }
 
   /* a picture that fails once is fetched again; a 320x180 one that isn't

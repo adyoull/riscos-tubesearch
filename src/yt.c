@@ -2078,3 +2078,32 @@ char *yt_reel_json (const yt_play *p, const char *video_id)
   sb_str (&b, "}\n");
   return sb_done (&b);
 }
+
+char *yt_share_text (int kind, const char *id, const char *title)
+{
+  sb b = { 0 };
+  if (kind == YT_SHARE_LINK)
+    sb_printf (&b, "https://www.youtube.com/watch?v=%s", id);
+  else if (kind == YT_SHARE_SHORT)
+    sb_printf (&b, "https://youtu.be/%s", id);
+  else
+    {
+      sb_printf (&b, "<iframe width=\"560\" height=\"315\" src=\"https://www.%s/embed/%s\" title=\"",
+                 kind == YT_SHARE_EMBED_NOCOOKIE ? "youtube-nocookie.com" : "youtube.com", id);
+      for (const char *t = title && *title ? title : "YouTube video player"; *t; t++)
+        if (*t == '&')
+          sb_str (&b, "&amp;");
+        else if (*t == '<')
+          sb_str (&b, "&lt;");
+        else if (*t == '>')
+          sb_str (&b, "&gt;");
+        else if (*t == '"')
+          sb_str (&b, "&quot;");
+        else
+          sb_add (&b, t, 1);
+      sb_str (&b, "\" frameborder=\"0\" allow=\"accelerometer; autoplay; clipboard-write; encrypted-media; "
+                  "gyroscope; picture-in-picture; web-share\" referrerpolicy=\"strict-origin-when-cross-origin\" "
+                  "allowfullscreen></iframe>");
+    }
+  return sb_done (&b);
+}

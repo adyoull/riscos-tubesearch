@@ -33,7 +33,7 @@ type a search and press Return.
 | Back | the page before |
 | Subscriptions | the newest videos of the channels you follow (Adjust: the channels) |
 | Refresh (or F5) | the page on screen fetched again (a live stream that has started, new videos) |
-| Menu | Play, Related, Channel, Save video, Subscribe, Back, Refresh, Quality (360p–1080p), Frame rate (30/60), Sound (my language / original / a language; languages you also understand) |
+| Menu | Play, Related, Channel, Save video, Copy (embed code, no-cookie embed code, link, short link), Subscribe, Back, Refresh, Quality (360p–1080p), Frame rate (30/60), Sound (my language / original / a language; languages you also understand) |
 | a pasted YouTube address | plays it, and shows what's related |
 | Menu on the icon bar icon | Info, Search, Subscriptions, My channels, Quality, Frame rate, Sound, Quit |
 | Uploaded (beside Search) | Any time, Today, This week, This month, This year |

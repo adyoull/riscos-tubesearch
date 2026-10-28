@@ -174,6 +174,25 @@ static void test_save_parts (void)
   CHECK (yt_url_clen ("https://rr1.googlevideo.com/videoplayback?clen=&dur=2") == -1 && yt_url_clen (NULL) == -1);
 }
 
+/* Sharing: the embed codes and links */
+static void test_share (void)
+{
+  char *t = yt_share_text (YT_SHARE_EMBED, "dQw4w9WgXcQ", "A & B <\"C\">");
+  CHECK (t && !strncmp (t, "<iframe width=\"560\" height=\"315\" src=\"https://www.youtube.com/embed/dQw4w9WgXcQ\" "
+                           "title=\"A &amp; B &lt;&quot;C&quot;&gt;\" frameborder=\"0\"", 120)
+         && strstr (t, " allowfullscreen></iframe>") && !strchr (t, '\n'));
+  free (t);
+  t = yt_share_text (YT_SHARE_EMBED_NOCOOKIE, "dQw4w9WgXcQ", NULL);
+  CHECK (t && strstr (t, "src=\"https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ\"") && strstr (t, "title=\"YouTube video player\""));
+  free (t);
+  t = yt_share_text (YT_SHARE_LINK, "dQw4w9WgXcQ", "x");
+  CHECK (t && !strcmp (t, "https://www.youtube.com/watch?v=dQw4w9WgXcQ"));
+  free (t);
+  t = yt_share_text (YT_SHARE_SHORT, "dQw4w9WgXcQ", "x");
+  CHECK (t && !strcmp (t, "https://youtu.be/dQw4w9WgXcQ"));
+  free (t);
+}
+
 /* The language and country from RISC OS's territory; languages understood */
 static void test_languages (void)
 {
@@ -717,6 +736,7 @@ int main (int argc, char **argv)
   test_text ();
   test_languages ();
   test_save_parts ();
+  test_share ();
   test_requests ();
   test_lists ();
   test_player ();

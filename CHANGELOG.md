@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.0-rc14 (2026-10-28): Copy
+
+- Copy on a video's menu: Embed code (YouTube's <iframe>), Embed code
+  (no cookies: the same from youtube-nocookie.com), Link and Short link,
+  put on the RISC OS clipboard (Message_ClaimEntity; a paste's
+  DataRequest is answered by the save protocol) to paste with Ctrl-V.
+  Asked for on the ROOL forum, for putting videos on a web site.
+
 ## 0.2.0-rc13 (2026-10-27): saving videos
 
 - Save video... on a video's menu: a save box whose file icon is dragged

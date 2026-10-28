@@ -47,6 +47,8 @@ enum { Button_Adjust = 1, Button_Menu = 2, Button_Select = 4 };
 #define Message_DataLoadAck 4
 #define Message_DataSave 1
 #define Message_PreQuit 8
+#define Message_ClaimEntity 15
+#define Message_DataRequest 16
 #define Message_DataSaveAck 2
 #define Message_TaskWindow_Output 0x808C1
 #define Message_TaskWindow_Ego 0x808C2
@@ -1819,13 +1821,80 @@ static void save_message (const int *b)
     }
 }
 
+/* ---- the clipboard: Copy on a video's menu ---------------------------------
+
+   The RISC OS global clipboard: claimed with Message_ClaimEntity; an
+   application pasting asks with Message_DataRequest, and gets the text by
+   the usual save protocol (DataSave, its DataSaveAck naming a file,
+   written, then DataLoad). Another task's claim ends ours. */
+
+static struct {
+  char *text;                 /* what's on it, or NULL (someone else's) */
+  int my_ref;                 /* our DataSave, waiting for its DataSaveAck */
+} clip;
+static char copy_id[16], copy_title[200];
+
+static void copy_text (int kind)
+{
+  char *t = yt_share_text (kind, copy_id, copy_title);
+  int m[6] = { 24, 0, 0, 0, Message_ClaimEntity, 4 };   /* 4: the clipboard */
+  static const char *const what[] = { "the embed code", "the embed code (no cookies)", "the link", "the short link" };
+  if (!t)
+    {
+      ui_report ("Out of memory");
+      return;
+    }
+  free (clip.text);
+  clip.text = t;
+  clip.my_ref = 0;
+  _swix (Wimp_SendMessage, _INR (0, 2), 17, m, 0);
+  set_status ("Copied %s for %s: paste it with Ctrl-V", what[kind], copy_title);
+}
+
+static void clip_message (const int *b)
+{
+  if (b[4] == Message_ClaimEntity && b[1] != task && (b[5] & 4))
+    {
+      free (clip.text);                        /* (someone else's now) */
+      clip.text = NULL;
+      clip.my_ref = 0;
+    }
+  else if (b[4] == Message_DataRequest && clip.text && (b[9] & 4))
+    {
+      /* a paste: the text, as a file of text (the save protocol) */
+      int m[64];
+      memset (m, 0, sizeof m);
+      m[0] = 64;
+      m[3] = b[2];
+      m[4] = Message_DataSave;
+      m[5] = b[5]; m[6] = b[6]; m[7] = b[7]; m[8] = b[8];
+      m[9] = (int) strlen (clip.text);
+      m[10] = 0xFFF;
+      strcpy ((char *) &m[11], "Clipboard");
+      if (!_swix (Wimp_SendMessage, _INR (0, 2), 17, m, b[1]))
+        clip.my_ref = m[2];
+    }
+  else if (b[4] == Message_DataSaveAck && clip.my_ref && b[3] == clip.my_ref && clip.text)
+    {
+      int m[64];
+      const char *path = (const char *) &b[11];
+      clip.my_ref = 0;
+      if (_swix (OS_File, _INR (0, 2) | _INR (4, 5), 10, path, 0xFFF, clip.text, clip.text + strlen (clip.text)))
+        return;
+      memcpy (m, b, sizeof m < (size_t) b[0] ? sizeof m : (size_t) b[0]);
+      m[3] = b[2];
+      m[4] = Message_DataLoad;
+      _swix (Wimp_SendMessage, _INR (0, 2), 18, m, b[1]);
+    }
+}
+
 /* ---- menus -------------------------------------------------------------- */
 
 typedef struct { int flags, submenu, icon_flags; int data[3]; } menu_item;
 typedef struct { char title[12]; unsigned char colours[4]; int width, height, gap; menu_item item[32]; } menu_block;
 
 static menu_block quality_menu, bar_menu, tile_menu, date_menu, sound_menu, fps_menu, lang_menu, understood_menu,
-  mine_menu;
+  mine_menu, copy_menu;
 static char auto_language[32] = "en-GB", auto_region[8] = "GB";   /* from the territory, keyboard and Config */
 
 /* Sound > My language's choice (Choices' my_language), over the automatic one */
@@ -2075,7 +2144,7 @@ static void open_iconbar_menu (int x)
 
 /* The window menu's Subscribe/Unsubscribe: which channel, and where things are */
 static struct { char id[40]; char name[200]; char thumb[400]; } menu_sub;
-static struct { int save, sub, back, refresh, quality; } menu_at;
+static struct { int save, copy, sub, back, refresh, quality; } menu_at;
 
 static void sub_choice (const char *id, const char *name, const char *thumb)
 {
@@ -2124,6 +2193,7 @@ static void open_tile_menu (int i, int x, int y)
   build_sound_menu ();
   menu_tile = i;
   menu_at.save = -1;
+  menu_at.copy = -1;
   if (p && i >= 0 && i < p->list.n)
     {
       it = &p->list.items[i];
@@ -2148,6 +2218,19 @@ static void open_tile_menu (int i, int x, int y)
               if (it->duration[0] && !strcmp (it->duration, "LIVE"))
                 tile_menu.item[n - 1].icon_flags |= 1 << 22;  /* (a live stream can't be) */
             }
+          /* Copy: to the clipboard */
+          {
+            static char nocookie[] = "Embed code (no cookies)";
+            snprintf (copy_id, sizeof copy_id, "%.12s", it->id);
+            snprintf (copy_title, sizeof copy_title, "%s", it->title ? it->title : it->id);
+            menu_init (&copy_menu, "Copy", (int) (sizeof nocookie + 2) * 16);
+            menu_add (&copy_menu, 0, "Embed code", 0, 0);
+            menu_add_ind (&copy_menu, 1, nocookie, sizeof nocookie, 0);
+            menu_add (&copy_menu, 2, "Link", 0, 0);
+            menu_add (&copy_menu, 3, "Short link", 0, 0x80);
+            menu_at.copy = n;
+            menu_add (&tile_menu, n++, "Copy", (int) &copy_menu, 0);
+          }
           sub_choice (it->channel_id, it->channel, "");
         }
       else
@@ -2269,6 +2352,11 @@ static int menu_selection (const int *sel)
               menu_open = M_NONE;
               return 0;
             }
+        }
+      else if (i == menu_at.copy && i >= 0)
+        {
+          if (sel[1] >= 0 && sel[1] <= 3)
+            copy_text (sel[1]);
         }
       else if (i == menu_at.sub && i >= 0)
         toggle_sub ();
@@ -2398,7 +2486,8 @@ int ui_init (void)
 {
   static const int messages[] = { Message_DataLoad, Message_ModeChange, Message_FontChanged, Message_TaskCloseDown,
                                   Message_DataSaveAck, Message_TaskWindow_Output, Message_TaskWindow_Ego,
-                                  Message_TaskWindow_Morio, Message_PreQuit, 0 };
+                                  Message_TaskWindow_Morio, Message_PreQuit, Message_ClaimEntity,
+                                  Message_DataRequest, Message_DataLoadAck, 0 };
   char err[200];
   int alphabet = 0;
   const char *dir = getenv ("TubeSearch$Dir");
@@ -2543,6 +2632,7 @@ int ui_event (int reason, int *b)
       if (b[4] == Message_TaskCloseDown && helper.running && b[1] == helper.task)
         helper_closed ();
       save_message (b);
+      clip_message (b);
       if (b[4] == Message_DataLoad && (b[5] == win || b[5] == bar || b[5] == -2))
         data_load (b);
       if (b[4] == Message_ModeChange || b[4] == Message_FontChanged)

@@ -170,7 +170,7 @@ the release named in `.riscos-deps`; the zip is kept on the run's page. The
 same build on any machine with Docker:
 
 ```sh
-docker run --rm -v "$PWD":/src ghcr.io/adyoull/riscos-crossdev:1.8.2 make check all
+docker run --rm -v "$PWD":/src ghcr.io/adyoull/riscos-crossdev:1.14 make check all
 ```
 
 Once a day `riscos-deps-update.yml` looks for a newer riscos-crossdev

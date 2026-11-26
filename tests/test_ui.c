@@ -582,6 +582,29 @@ static void redraw (void)
   ui_event (1, block);
 }
 
+/* Is text drawn anywhere in the main window, scrolled through from the
+   top? (Left scrolled to the top.) Where a tile is in the list can depend
+   on today's date (a feed's dates against "3 days ago"). */
+static int drawn_anywhere (const char *text)
+{
+  int b[9], found = 0, h = wins[1].vis[3] - wins[1].vis[1];
+  b[0] = 1;
+  memcpy (&b[1], wins[1].vis, 4 * sizeof (int));
+  b[5] = 0; b[7] = -1;
+  for (int sy = 0; sy > -60000 && !found; sy -= h > 100 ? h - 50 : 400)
+    {
+      b[6] = sy;
+      ui_event (2, b);
+      redraw ();
+      found = strstr (drawn, text) != NULL;
+      if (wins[1].sy != sy)
+        break;                                  /* (the end: it went no further) */
+    }
+  b[6] = 0;
+  ui_event (2, b);
+  return found;
+}
+
 static void click (int win, int icon, int x, int y, int buttons)
 {
   block[0] = x; block[1] = y; block[2] = buttons; block[3] = win; block[4] = icon;
@@ -1217,8 +1240,7 @@ int main (int argc, char **argv)
     }
     CHECK (!strcmp (title (), "TubeSearch: Subscriptions") && strstr (status (), "videos from 3 channels"), "the subscriptions' videos");
     CHECK (atoi (status ()) == 5 + 30, "5 from the feeds, 30 from the page");
-    redraw ();
-    CHECK (strstr (drawn, "Les jeux d'horreur & moi") != NULL, "the feeds' videos shown");
+    CHECK (drawn_anywhere ("Les jeux d'horreur & moi"), "the feeds' videos shown");
     if ((f = fopen (path, "r")))
       {
         n = fread (text, 1, sizeof text - 1, f);

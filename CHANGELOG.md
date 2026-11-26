@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0-rc15 (2026-11-26): riscos-crossdev 1.14
+
+- Built with riscos-crossdev 1.14, so linked with UnixLib 5.0.3.12
+  (word-aligned data, the first-touch stack fixes, faster strings).
+  TubeSearch's own code is unchanged; it uses no threads, so 5.0.3.12's
+  thread changes don't touch it.
+- A test that looked for the feeds' videos on the first screen of the
+  Subscriptions page now scrolls through it: where they come in the list
+  depends on today's date.
+
 ## 0.2.0-rc14 (2026-10-28): Copy
 
 - Copy on a video's menu: Embed code (YouTube's <iframe>), Embed code
